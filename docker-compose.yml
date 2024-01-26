@@ -1,7 +1,7 @@
 services:
     routeros:
         container_name: "mikrotik"
-        image: cnsoluciones/mikrotik:7.6
+        image: hossein3piol/mikrotik-routeros:latest
         privileged: true
         ports:
             - "21:21" #ftp
@@ -17,5 +17,5 @@ services:
             - "13231:13231" #WireGuard
         cap_add: 
             - NET_ADMIN
-        devices: 
+        devices:
             - /dev/net/tun
