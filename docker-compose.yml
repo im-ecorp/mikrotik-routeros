@@ -1,23 +1,33 @@
 version: "3.9"
 
 services:
-    routeros:
-        container_name: "mikrotik"
-        image: hossein3piol/mikrotik-routeros:latest
-        privileged: true
-        ports:
-            - "21:21" #ftp
-            - "22:22" #ssh
-            - "23:23" #telnet
-            - "80:80" #www
-            - "443:443" #www-ssl
-            - "1194:1194" #OVPN
-            - "1450:1450" #L2TP
-            - "8291:8291" #winbox
-            - "8728:8728" #api
-            - "8729:8729" #api-ssl
-            - "13231:13231" #WireGuard
-        cap_add: 
-            - NET_ADMIN
-        devices:
-            - /dev/net/tun
+     routers:
+         container_name: "mikrotik"
+         image: hossein3piol/mikrotik-routeros:latest
+         privileged: true
+         ports:
+             - "21:21"    #ftp
+             - "22:22"    #ssh
+             - "23:23"    #telnet
+               #- "80:80"    #www
+               #- "443:443"  #www-ssl
+             - "4646:4646"  #OVPN
+             - "8521:8521"  #L2TP
+             - "8291:8291"  #winbox
+             - "8728:8728"  #api
+             - "8729:8729"  #api-ssl
+             - "13231:13231"  #WireGuard
+         cap_add:
+             - NET_ADMIN
+         devices:
+             - /dev/net/tun
+         networks:
+             - mikro_network
+
+networks:
+    mikro_network:
+        driver: bridge
+        ipam:
+            config:
+                - subnet: 172.24.0.0/16
+                  gateway: 172.24.0.1
