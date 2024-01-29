@@ -3,9 +3,9 @@ FROM --platform=$BUILDPLATFORM alpine AS build
 LABEL maintainer="Federico Pereira <fpereira@cnsoluciones.com>"
 
 # Configuración de variables de entorno
-ENV ROUTEROS_URL=https://download.mikrotik.com/routeros/7.8/chr-7.8.vdi.zip
-ENV ROUTEROS_IMAGE=chr-7.8.vdi
-ENV ROUTEROS_VERSION=7.8
+ENV ROUTEROS_URL=https://download.mikrotik.com/routeros/7.9/chr-7.9.vdi.zip
+ENV ROUTEROS_IMAGE=chr-7.9.vdi
+ENV ROUTEROS_VERSION=7.9
 ENV VNCPASSWORD=false
 ENV KEYBOARD=en-us
 
@@ -38,17 +38,17 @@ WORKDIR /routeros
 COPY bin /routeros/bin
 
 # Exposición de puertos
-EXPOSE 1723
-EXPOSE 1701
-EXPOSE 1194
-EXPOSE 21
-EXPOSE 22
-EXPOSE 23
-EXPOSE 443
-EXPOSE 80
-EXPOSE 8291
-EXPOSE 8728
-EXPOSE 8729
+# EXPOSE 1723
+# EXPOSE 1701
+# EXPOSE 1194
+# EXPOSE 21
+# EXPOSE 22
+# EXPOSE 23
+# EXPOSE 443
+# EXPOSE 80
+# EXPOSE 8291
+# EXPOSE 8728
+# EXPOSE 8729
 
 # Dar permisos de ejecución a los archivos necesarios
 RUN chmod +x /routeros/bin/entrypoint.sh
