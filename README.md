@@ -72,10 +72,38 @@ If you want to give your container static IP, its example is included in the pro
 <details>
   <summary>Click for Openvpn configuration details</summary>
 
+### Openvpn
 
-  
+- first of all we need add private range IP address for each client to have an IP address
+
+  I use 172.24.0.0/16 rage. you can use other range like 192.168.0.0/16
+  ![ip_pool](./media/1.png)
+
+- after setting IP pool, must get certificate for Openvpn
+  ![certificate](./media/2.png)
+
+- crete profile for Openvpn
+  ![profile](./media/3.png)
+
+- add new client in secret tab
+  ![clinet](./media/4.png)
+
+- create Openvpn profile on interface tab
+  ![interface](./media/5.png)
+  I use `4646` port for Openvpn. You can use other ports
 
 
+- Finally, in order for each configuration to connect to the Internet, the firewall rule must be set
+  ![firewall_nat](./media/6.png)
 
 </details>
 
+
+## A Special Thanks to
+- [lordbasex](https://github.com/lordbasex)
+
+## If this project is helpful to you, you may wish to give it a🌟
+- USDT (TRC20): `TH1iDsFr2wjgpptghFBn6h7DVt88pp5WoH`
+                        
+## Stargazers over time
+[![Stargazers over time](https://starchart.cc/im-ecorp/mikrotik-routeros.svg?variant=light)](https://starchart.cc/im-ecorp/mikrotik-routeros)
