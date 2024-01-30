@@ -4,11 +4,11 @@
 If you want to install a Mikrotik on the server, but also use the rest of the server, you should use Docker.
 
 ## Pull the image
-```
+```sh
 docker pull ghcr.io/im-ecorp/mikrotik-routeros:latest
 ```
 or
-```
+```sh
 docker pull hossein3piol/mikrotik-routeros:latest
 ```
 You can use version tag instead of `latest`
@@ -19,7 +19,7 @@ for example `hossein3piol/mikrotik-routeros:7.9`
 
 * command line
 
-  ```
+  ```sh
   docker run -itd \
     --name mikrotik \
     -p 80:80 -p 443:443 -p 1194:1194 -p 8291:8291 -p 8729:8729 \
@@ -30,7 +30,7 @@ for example `hossein3piol/mikrotik-routeros:7.9`
 
 to stop the container
 
-```
+```sh
 docker stop mikrotik
 docker rm mikrotik
 ```
@@ -64,3 +64,18 @@ docker rm mikrotik
          devices:
              - /dev/net/tun
   ```
+If you want to give your container static IP, its example is included in the project
+
+## Configure Openvpn
+
+
+<details>
+  <summary>Click for Openvpn configuration details</summary>
+
+
+  
+
+
+
+</details>
+
