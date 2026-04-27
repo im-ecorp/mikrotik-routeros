@@ -49,5 +49,5 @@ jobs:
           tags: |
             hossein3piol/mikrotik-routeros:v${{ github.event.inputs.version }}
             hossein3piol/mikrotik-routeros:latest
-            ghcr.io/${{ env.REPO }}:v${{ github.event.inputs.version }}
-            ghcr.io/${{ env.REPO }}:latest
+            ghcr.io/${{ github.actor }}/mikrotik-routeros:v${{ github.event.inputs.version }}
+            ghcr.io/${{ github.actor }}/mikrotik-routeros:latest
