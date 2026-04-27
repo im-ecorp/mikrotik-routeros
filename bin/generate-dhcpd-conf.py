@@ -3,9 +3,9 @@
 import argparse
 import ipaddress
 import json
-import re
 import socket
 import subprocess
+import sys
 
 from typing import List, Iterable
 
@@ -25,51 +25,67 @@ option subnet   {subnet}
 option hostname {hostname}
 """
 
-def default_route(routes):
-    """Returns the host's default route"""
+def run_ip_command(args: list) -> list:
+    """Runs an `ip -json` command and returns parsed JSON."""
+    cmd = ['ip', '-json'] + args
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+        stdout, stderr = proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Command '{' '.join(cmd)}' failed (exit {proc.returncode}): {stderr.decode().strip()}"
+            )
+        return json.loads(stdout)
+
+def default_route(routes: list) -> dict:
+    """Returns the host's default route entry."""
     for route in routes:
-        if route['dst'] == DEFAULT_ROUTE:
+        if route.get('dst') == DEFAULT_ROUTE:
             return route
-    raise ValueError('no default route')
+    raise ValueError('No default route found in routing table.')
 
-def addr_of(addrs, dev : str) -> ipaddress.IPv4Interface:
-    """Finds and returns the IP address of `dev`"""
+def addr_of(addrs: list, dev: str) -> ipaddress.IPv4Interface:
+    """Finds and returns the IPv4 address of the given interface."""
     for addr in addrs:
-        if addr['ifname'] != dev:
+        if addr.get('ifname') != dev:
             continue
-        info = addr['addr_info'][0]
-        return ipaddress.IPv4Interface((info['local'], info['prefixlen']))
-    raise ValueError('dev {0} not found'.format(dev))
+        for info in addr.get('addr_info', []):
+            if info.get('family') == 'inet':
+                return ipaddress.IPv4Interface((info['local'], info['prefixlen']))
+    raise ValueError(f"Interface '{dev}' not found or has no IPv4 address.")
 
-def generate_conf(intf_name : str, dns : Iterable[str]) -> str:
-    """Generates a dhcpd config. `intf_name` is the interface to listen on."""
-    with subprocess.Popen(['ip', '-json', 'route'], stdout=subprocess.PIPE) as proc:
-        routes = json.load(proc.stdout)
-    with subprocess.Popen(['ip', '-json', 'addr'], stdout=subprocess.PIPE) as proc:
-        addrs = json.load(proc.stdout)
-    
+def generate_conf(intf_name: str, dns: Iterable[str]) -> str:
+    """Generates a udhcpd config for the given bridge interface."""
+    routes = run_ip_command(['route'])
+    addrs = run_ip_command(['addr'])
+
     droute = default_route(routes)
     host_addr = addr_of(addrs, droute['dev'])
 
+    gateway = droute.get('gateway')
+    if not gateway:
+        raise ValueError('Default route has no gateway.')
+
     return DHCP_CONF_TEMPLATE.format(
-        dhcp_intf = intf_name,
-        dns = ' '.join(dns),
-        gateway = droute['gateway'],
-        host_addr = host_addr.ip,
-        hostname = socket.gethostname(),
-        subnet = host_addr.network.netmask,
+        dhcp_intf=intf_name,
+        dns=' '.join(dns),
+        gateway=gateway,
+        host_addr=host_addr.ip,
+        hostname=socket.gethostname(),
+        subnet=host_addr.network.netmask,
     )
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('intf_name')
-    parser.add_argument('dns_ips', nargs='*')
+    parser = argparse.ArgumentParser(
+        description='Generate a udhcpd configuration for the QEMU bridge interface.'
+    )
+    parser.add_argument('intf_name', help='Bridge interface name (e.g. qemubr0)')
+    parser.add_argument('dns_ips', nargs='*', help='Optional DNS server IPs')
     args = parser.parse_args()
 
-    dns_ips = args.dns_ips
-    if not dns_ips:
-        dns_ips = DEFAULT_DNS_IPS
+    dns_ips = args.dns_ips if args.dns_ips else DEFAULT_DNS_IPS
 
-    print(generate_conf(args.intf_name, dns_ips))
-
-    
+    try:
+        print(generate_conf(args.intf_name, dns_ips))
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)

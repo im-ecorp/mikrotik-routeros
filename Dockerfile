@@ -12,7 +12,6 @@ ENV ROUTEROS_URL=https://download.mikrotik.com/routeros/$ROUTEROS_VERSION/chr-$R
 RUN apk add --no-cache \
     wget \
     netcat-openbsd \
-    qemu-x86_64 \
     qemu-system-x86_64 \
     busybox-extras \
     iproute2 \
@@ -22,13 +21,15 @@ RUN apk add --no-cache \
     jq \
     bash \
     python3 \
-    curl \
-    unzip
+    unzip \
+    md5sum
 
 RUN mkdir /routeros && \
-    wget --no-check-certificate ${ROUTEROS_URL} -O /routeros/image.zip && \
-    unzip /routeros/image.zip -d /routeros && \
-    rm -f /routeros/image.zip
+    wget "${ROUTEROS_URL}" -O /routeros/image.zip && \
+    wget "${ROUTEROS_URL}.md5" -O /routeros/image.zip.md5 && \
+    cd /routeros && md5sum -c image.zip.md5 && \
+    unzip image.zip -d /routeros && \
+    rm -f image.zip image.zip.md5
 
 WORKDIR /routeros
 

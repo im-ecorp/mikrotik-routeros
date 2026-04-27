@@ -5,7 +5,7 @@ services:
     privileged: true
     restart: unless-stopped
     environment:
-      - TZ=Asia/Tehran
+      - TZ=${TZ:-Asia/Tehran}
     cap_add:
       - NET_ADMIN
     devices:
@@ -15,19 +15,19 @@ services:
       - ./shared:/routeros/shared
     ports:
       - "21:21"           # FTP
-      - "2222:22"         
+      - "2222:22"         # SSH (remapped to avoid host conflict)
       - "23:23"           # Telnet
-      - "80:80"           # HTTP
-      - "443:443"         # HTTPS
-      - "1194:1194"       # OVPN
+      - "80:80"           # HTTP / WebFig
+      - "443:443"         # HTTPS / WebFig SSL
+      - "1194:1194"       # OpenVPN
       - "1450:1450"       # L2TP
       - "1701:1701"       # L2TP/IPsec
       - "1723:1723"       # PPTP
       - "8291:8291"       # Winbox
-      - "8728:8728"       # API
-      - "8729:8729"       # API-SSL
+      - "8728:8728"       # RouterOS API
+      - "8729:8729"       # RouterOS API-SSL
       - "13231:13231"     # WireGuard
-      - "9000-9100:9000-9100"
+      - "9000-9100:9000-9100"  # Reserved for custom services
     networks:
       - mikro_network
     healthcheck:
