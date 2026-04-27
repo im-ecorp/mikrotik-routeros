@@ -1,33 +1,45 @@
-version: "3.9"
-
 services:
-     routers:
-         container_name: "mikrotik"
-         image: hossein3piol/mikrotik-routeros:latest
-         privileged: true
-         ports:
-             - "21:21"    #ftp
-             - "22:22"    #ssh
-             - "23:23"    #telnet
-             - "80:80"    #http
-             - "443:443"  #https
-             - "1194:1194"  #OVPN
-             - "1450:1450"  #L2TP
-             - "8291:8291"  #winbox
-             - "8728:8728"  #api
-             - "8729:8729"  #api-ssl
-             - "13231:13231"  #WireGuard
-         cap_add:
-             - NET_ADMIN
-         devices:
-             - /dev/net/tun
-         networks:
-             - mikro_network
+  routers:
+    container_name: "mikrotik"
+    image: hossein3piol/mikrotik-routeros:${ROUTEROS_VERSION:-latest}
+    privileged: true
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Tehran
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    volumes:
+      - ./data:/routeros/data
+      - ./shared:/routeros/shared
+    ports:
+      - "21:21"           # FTP
+      - "2222:22"         
+      - "23:23"           # Telnet
+      - "80:80"           # HTTP
+      - "443:443"         # HTTPS
+      - "1194:1194"       # OVPN
+      - "1450:1450"       # L2TP
+      - "1701:1701"       # L2TP/IPsec
+      - "1723:1723"       # PPTP
+      - "8291:8291"       # Winbox
+      - "8728:8728"       # API
+      - "8729:8729"       # API-SSL
+      - "13231:13231"     # WireGuard
+      - "9000-9100:9000-9100"
+    networks:
+      - mikro_network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "8291"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 networks:
-    mikro_network:
-        driver: bridge
-        ipam:
-            config:
-                - subnet: 172.24.0.0/16
-                  gateway: 172.24.0.1
+  mikro_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.24.0.0/16
+          gateway: 172.24.0.1

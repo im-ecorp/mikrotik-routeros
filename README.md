@@ -1,109 +1,101 @@
-# Mikrotik-routeros
-**Install and run mikrotik routeros using docker**
+# MikroTik RouterOS on Docker
 
-If you want to install a Mikrotik on the server, but also use the rest of the server, you should use Docker.
+A highly optimized and production-ready Dockerized environment for running MikroTik RouterOS (CHR) using QEMU. This project allows you to seamlessly deploy MikroTik on a Linux server while retaining full access to your host OS and its existing services.
 
-## Pull the image
+## Key Features
+
+- **Persistent Storage:** Prevents configuration loss on container restarts or rebuilds by keeping the virtual hard drive safe on the host.
+- **Host-to-Guest File Sharing:** Mounts a local host directory as a virtual FAT drive directly inside the MikroTik File Manager.
+- **Safe SSH Access:** Re-routes the MikroTik SSH port to prevent conflicts with the host machine's SSH daemon.
+- **Dynamic Port Range:** Pre-allocates a wide range of open ports for custom MikroTik services without requiring Docker restarts.
+- **Version Management:** Easily switch between RouterOS versions using environment variables.
+
+---
+
+## Prerequisites
+
+- Docker
+- Docker Compose (v2 recommended)
+
+## Quick Start
+
+### 1. Clone the repository
 ```sh
-docker pull ghcr.io/im-ecorp/mikrotik-routeros:latest
-```
-or
-```sh
-docker pull hossein3piol/mikrotik-routeros:latest
-```
-You can use version tag instead of `latest`
-
-for example `hossein3piol/mikrotik-routeros:7.9`
-
-## Run container using command
-
-* command line
-
-  ```sh
-  docker run -itd \
-    --name mikrotik \
-    -p 80:80 -p 443:443 -p 1194:1194 -p 8291:8291 -p 8729:8729 \
-    --cap-add=NET_ADMIN \
-    --device=/dev/net/tun \
-    ghcr.io/im-ecorp/mikrotik-routeros:latest
-  ```
-
-to stop the container
-
-```sh
-docker stop mikrotik
-docker rm mikrotik
+git clone [https://github.com/hossein3piol/mikrotik-routeros.git](https://github.com/hossein3piol/mikrotik-routeros.git)
+cd mikrotik-routeros
 ```
 
-## Run container using compose
+### 2. Configure Environment Variables
+Create a `.env` file in the root directory to specify your desired RouterOS version. If omitted, the `latest` tag will be used.
+```sh
+echo "ROUTEROS_VERSION=7.21.4" > .env
+```
 
-* compose file
+### 3. Start the Container
+Run the following command to build the image (if not pulled) and start the environment in the background:
+```sh
+docker-compose up -d
+```
 
-  ```
-  version: '3.9'
+---
 
-  services:
-     routers:
-         container_name: "mikrotik"
-         image: ghcr.io/im-ecorp/mikrotik-routeros:latest
-         privileged: true
-         ports:
-             - "21:21"    #ftp
-             - "22:22"    #ssh
-             - "23:23"    #telnet
-             - "80:80"    #http
-             - "443:443"  #https
-             - "1194:1194"  #OVPN
-             - "1450:1450"  #L2TP
-             - "8291:8291"  #winbox
-             - "8728:8728"  #api
-             - "8729:8729"  #api-ssl
-             - "13231:13231"  #WireGuard
-         cap_add:
-             - NET_ADMIN
-         devices:
-             - /dev/net/tun
-  ```
-If you want to give your container static IP, its example is included in the project
+## Architecture & Configuration Details
 
-## Configure Openvpn
+### Directory Structure & Volumes
+This setup utilizes two main directories mapped to the host:
+* `./data`: Stores the primary `chr.vdi` virtual drive. This ensures your router's configurations, users, and licenses survive container recreation.
+* `./shared`: Acts as a bridge between the Linux host and the RouterOS guest. Files placed here will automatically appear inside the MikroTik **File Manager** as an attached drive (using QEMU's virtual FAT feature).
 
+### Networking and Ports
+By default, Docker's `bridge` network is utilized to maintain host stability. 
+* **Winbox (8291):** Fully exposed for GUI management.
+* **SSH (2222):** Mapped to port `2222` externally to avoid locking you out of your Linux host's SSH (port 22). To access MikroTik via SSH, use: `ssh admin@<SERVER_IP> -p 2222`
+* **Custom Services Range (9000-9100):** A block of 100 ports is exposed by default. If you need to change a default MikroTik service port, assign it within this range to ensure immediate accessibility without modifying `docker-compose.yml`.
+
+To stop and remove the container:
+```sh
+docker-compose down
+```
+
+---
+
+## Advanced: OpenVPN Configuration
 
 <details>
-  <summary>Click for Openvpn configuration details</summary>
+  <summary>Click to expand step-by-step OpenVPN configuration guide</summary>
 
-### Openvpn
+1. **IP Pool Setup:** Add a private IP range for clients. For instance, `172.24.0.0/16` or `192.168.0.0/16`.
+   ![ip_pool](./media/1.png)
 
-- first of all we need add private range IP address for each client to have an IP address
+2. **Generate Certificates:** Proper certificates must be acquired/generated for OpenVPN authentication.
+   ![certificate](./media/2.png)
 
-  I use 172.24.0.0/16 rage. you can use other range like 192.168.0.0/16
-  ![ip_pool](./media/1.png)
+3. **Create OpenVPN Profile:** Set up the routing profile for your VPN clients.
+   ![profile](./media/3.png)
 
-- after setting IP pool, must get certificate for Openvpn
-  ![certificate](./media/2.png)
+4. **Add Secrets (Clients):** Define user credentials in the Secrets tab.
+   ![client](./media/4.png)
 
-- crete profile for Openvpn
-  ![profile](./media/3.png)
+5. **Interface Configuration:** Create the OpenVPN Server binding in the interfaces tab. (Example uses port `4646` instead of the default `1194`).
+   ![interface](./media/5.png)
 
-- add new client in secret tab
-  ![clinet](./media/4.png)
-
-- create Openvpn profile on interface tab
-  ![interface](./media/5.png)
-  I use `4646` port for Openvpn. You can use other ports
-
-
-- Finally, in order for each configuration to connect to the Internet, the firewall rule must be set
-  ![firewall_nat](./media/6.png)
+6. **Firewall / NAT:** Crucial step: Configure the masquerade rule in the IP -> Firewall -> NAT tab so clients can reach the internet.
+   ![firewall_nat](./media/6.png)
 
 </details>
 
+---
 
-## A Special Thanks to
+## Acknowledgments
+A special thanks to the original contributors and inspirations for this setup:
 - [lordbasex](https://github.com/lordbasex)
 
-## If this project is helpful to you, you may wish to give it a🌟
-- USDT (TRC20): `TH1iDsFr2wjgpptghFBn6h7DVt88pp5WoH`
-                        
-## Stargazers over time
+## Support
+If you found this project helpful in your infrastructure or daily work, consider supporting its continuous development:
+- **USDT (TRC20):** `TH1iDsFr2wjgpptghFBn6h7DVt88pp5WoH`
+
+---
 [![Stargazers over time](https://starchart.cc/im-ecorp/mikrotik-routeros.svg?variant=light)](https://starchart.cc/im-ecorp/mikrotik-routeros)
+```
+
+

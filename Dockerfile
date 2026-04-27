@@ -1,60 +1,41 @@
-FROM --platform=$BUILDPLATFORM alpine AS build
+FROM alpine:3.19
 
-LABEL maintainer="Federico Pereira <fpereira@cnsoluciones.com>"
+LABEL org.opencontainers.image.authors="Hossein Sepiol <mhsaeidi81@gmail.com>"
+LABEL description="MikroTik RouterOS CHR running inside Docker using QEMU"
 
-# Configuración de variables de entorno
-ENV ROUTEROS_URL=https://download.mikrotik.com/routeros/7.9/chr-7.9.vdi.zip
-ENV ROUTEROS_IMAGE=chr-7.9.vdi
-ENV ROUTEROS_VERSION=7.9
-ENV VNCPASSWORD=false
-ENV KEYBOARD=en-us
+ARG ROUTEROS_VERSION=7.21.4
 
-# Instalación de dependencias
-RUN set -xe \
-    && apk add --no-cache --update \
-        wget \
-        netcat-openbsd \
-        qemu-x86_64 \
-        qemu-system-x86_64 \
-        busybox-extras \
-        iproute2 \
-        iputils \
-        bridge-utils \
-        iptables \
-        jq \
-        bash \
-        python3 \
-        curl
+ENV ROUTEROS_VERSION=$ROUTEROS_VERSION
+ENV ROUTEROS_IMAGE=chr-$ROUTEROS_VERSION.vdi
+ENV ROUTEROS_URL=https://download.mikrotik.com/routeros/$ROUTEROS_VERSION/chr-$ROUTEROS_VERSION.vdi.zip
 
-# Descarga y descompresión del archivo de imagen de RouterOS
-RUN mkdir /routeros && wget ${ROUTEROS_URL} -O /routeros/${ROUTEROS_IMAGE}.zip \
-    && unzip /routeros/${ROUTEROS_IMAGE}.zip -d /routeros \
-    && rm -fr /routeros/${ROUTEROS_IMAGE}.zip
+RUN apk add --no-cache \
+    wget \
+    netcat-openbsd \
+    qemu-x86_64 \
+    qemu-system-x86_64 \
+    busybox-extras \
+    iproute2 \
+    iputils \
+    bridge-utils \
+    iptables \
+    jq \
+    bash \
+    python3 \
+    curl \
+    unzip
 
-# Configuración de directorio de trabajo
+RUN mkdir /routeros && \
+    wget --no-check-certificate ${ROUTEROS_URL} -O /routeros/image.zip && \
+    unzip /routeros/image.zip -d /routeros && \
+    rm -f /routeros/image.zip
+
 WORKDIR /routeros
 
-# Copia de archivos y directorios
-COPY bin /routeros/bin
+COPY bin /routeros/bin/
 
-# Exposición de puertos
-# EXPOSE 1723
-# EXPOSE 1701
-# EXPOSE 1194
-# EXPOSE 21
-# EXPOSE 22
-# EXPOSE 23
-# EXPOSE 443
-# EXPOSE 80
-# EXPOSE 8291
-# EXPOSE 8728
-# EXPOSE 8729
+RUN chmod +x /routeros/bin/*
 
-# Dar permisos de ejecución a los archivos necesarios
-RUN chmod +x /routeros/bin/entrypoint.sh
-RUN chmod +x /routeros/bin/generate-dhcpd-conf.py
-RUN chmod +x /routeros/bin/qemu-ifup
-RUN chmod +x /routeros/bin/qemu-ifdown
+RUN mkdir -p /routeros/data /routeros/shared
 
-# Punto de entrada
 ENTRYPOINT ["/routeros/bin/entrypoint.sh"]
