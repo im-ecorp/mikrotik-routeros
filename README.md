@@ -1,101 +1,289 @@
 # MikroTik RouterOS on Docker
 
-A highly optimized and production-ready Dockerized environment for running MikroTik RouterOS (CHR) using QEMU. This project allows you to seamlessly deploy MikroTik on a Linux server while retaining full access to your host OS and its existing services.
+<div align="center">
 
-## Key Features
+[![Docker Image](https://img.shields.io/docker/v/hossein3piol/mikrotik-routeros?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/hossein3piol/mikrotik-routeros)
+[![Docker Pulls](https://img.shields.io/docker/pulls/hossein3piol/mikrotik-routeros)](https://hub.docker.com/r/hossein3piol/mikrotik-routeros)
+[![GitHub Stars](https://img.shields.io/github/stars/im-ecorp/mikrotik-routeros?style=social)](https://github.com/im-ecorp/mikrotik-routeros)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-- **Persistent Storage:** Prevents configuration loss on container restarts or rebuilds by keeping the virtual hard drive safe on the host.
-- **Host-to-Guest File Sharing:** Mounts a local host directory as a virtual FAT drive directly inside the MikroTik File Manager.
-- **Safe SSH Access:** Re-routes the MikroTik SSH port to prevent conflicts with the host machine's SSH daemon.
-- **Dynamic Port Range:** Pre-allocates a wide range of open ports for custom MikroTik services without requiring Docker restarts.
-- **Version Management:** Easily switch between RouterOS versions using environment variables.
+**A production-ready, QEMU-powered environment for running MikroTik RouterOS CHR inside Docker — without sacrificing your host OS.**
+
+</div>
+
+---
+
+## Overview
+
+This project packages MikroTik RouterOS (Cloud Hosted Router) inside a Docker container using QEMU for full x86_64 virtualization. It is designed for infrastructure engineers who need a reproducible, version-controlled MikroTik environment on any Linux server — with complete persistence, host file sharing, and safe port routing.
+
+---
+
+## Features
+
+| Feature | Description |
+|---|---|
+| **Persistent Storage** | Router configuration survives container rebuilds via a host-mounted virtual drive |
+| **Host ↔ Guest File Sharing** | A local directory is exposed inside MikroTik's File Manager as a virtual FAT drive |
+| **Safe SSH Access** | MikroTik SSH is remapped to port `2222` — your host SSH on port `22` is untouched |
+| **Dynamic Port Range** | Ports `9000–9100` are pre-allocated for custom services — no Compose restarts needed |
+| **Version Pinning** | Switch RouterOS versions via a single environment variable |
+| **KVM Acceleration** | Hardware virtualization enabled by default when `/dev/kvm` is available |
 
 ---
 
 ## Prerequisites
 
-- Docker
-- Docker Compose (v2 recommended)
+- Linux host with Docker Engine installed
+- Docker Compose v2+
+- KVM support recommended (`/dev/kvm` available) for acceptable performance
+
+---
 
 ## Quick Start
 
 ### 1. Clone the repository
+
 ```sh
-git clone [https://github.com/hossein3piol/mikrotik-routeros.git](https://github.com/hossein3piol/mikrotik-routeros.git)
+git clone https://github.com/im-ecorp/mikrotik-routeros.git
 cd mikrotik-routeros
 ```
 
-### 2. Configure Environment Variables
-Create a `.env` file in the root directory to specify your desired RouterOS version. If omitted, the `latest` tag will be used.
+### 2. Configure environment variables
+
+Copy the example and set your desired RouterOS version:
+
 ```sh
-echo "ROUTEROS_VERSION=7.21.4" > .env
+cp .env.example .env
+# Edit .env and set ROUTEROS_VERSION (e.g. 7.21.4)
 ```
 
-### 3. Start the Container
-Run the following command to build the image (if not pulled) and start the environment in the background:
+If `.env` is omitted, the `latest` tag is used by default.
+
+### 3. Start the container
+
 ```sh
-docker-compose up -d
+docker compose up -d
 ```
+
+### 4. Connect to MikroTik
+
+| Method | Address |
+|---|---|
+| **Winbox** | `<server-ip>:8291` |
+| **SSH** | `ssh admin@<server-ip> -p 2222` |
+| **WebFig** | `http://<server-ip>:80` |
+| **API** | `<server-ip>:8728` |
+
+Default credentials: `admin` / *(no password)*
 
 ---
 
-## Architecture & Configuration Details
+## Architecture
 
-### Directory Structure & Volumes
-This setup utilizes two main directories mapped to the host:
-* `./data`: Stores the primary `chr.vdi` virtual drive. This ensures your router's configurations, users, and licenses survive container recreation.
-* `./shared`: Acts as a bridge between the Linux host and the RouterOS guest. Files placed here will automatically appear inside the MikroTik **File Manager** as an attached drive (using QEMU's virtual FAT feature).
+### How It Works
 
-### Networking and Ports
-By default, Docker's `bridge` network is utilized to maintain host stability. 
-* **Winbox (8291):** Fully exposed for GUI management.
-* **SSH (2222):** Mapped to port `2222` externally to avoid locking you out of your Linux host's SSH (port 22). To access MikroTik via SSH, use: `ssh admin@<SERVER_IP> -p 2222`
-* **Custom Services Range (9000-9100):** A block of 100 ports is exposed by default. If you need to change a default MikroTik service port, assign it within this range to ensure immediate accessibility without modifying `docker-compose.yml`.
-
-To stop and remove the container:
-```sh
-docker-compose down
 ```
+┌──────────────────────────────────────────────────────┐
+│  Docker Container (Alpine Linux)                     │
+│                                                      │
+│   ┌────────────────────────────────────┐             │
+│   │  QEMU (x86_64 system emulation)    │             │
+│   │                                    │             │
+│   │   MikroTik RouterOS CHR            │             │
+│   │   ├── chr.vdi  (persistent disk)   │             │
+│   │   └── FAT drive (./shared)         │             │
+│   └────────────────┬───────────────────┘             │
+│                    │ TAP / bridge (qemubr0)           │
+└────────────────────┼─────────────────────────────────┘
+                     │
+              Docker bridge network
+              172.24.0.0/16
+```
+
+### Directory Structure
+
+```
+.
+├── bin/
+│   ├── entrypoint.sh          # Container entrypoint & QEMU launcher
+│   ├── generate-dhcpd-conf.py # Dynamic DHCP config generator
+│   ├── qemu-ifup              # TAP interface bring-up script
+│   └── qemu-ifdown            # TAP interface teardown script
+├── data/                      # Auto-created — stores chr.vdi (persistent)
+├── shared/                    # Auto-created — shared with MikroTik File Manager
+├── Dockerfile
+├── docker-compose.yml
+└── .env.example
+```
+
+### Volumes
+
+| Host Path | Container Path | Purpose |
+|---|---|---|
+| `./data` | `/routeros/data` | Stores the persistent virtual hard drive (`chr.vdi`) |
+| `./shared` | `/routeros/shared` | Exposed to MikroTik as a virtual FAT drive |
+
+> **Important:** Never delete `./data` unless you intend to reset the router to factory defaults.
+
+---
+
+## Port Reference
+
+| Port | Protocol | Service |
+|---|---|---|
+| `21` | TCP | FTP |
+| `22` (→ host `2222`) | TCP | SSH |
+| `23` | TCP | Telnet |
+| `80` | TCP | WebFig (HTTP) |
+| `443` | TCP | WebFig (HTTPS) |
+| `1194` | TCP/UDP | OpenVPN |
+| `1701` | UDP | L2TP |
+| `1723` | TCP | PPTP |
+| `8291` | TCP | Winbox |
+| `8728` | TCP | RouterOS API |
+| `8729` | TCP | RouterOS API-SSL |
+| `13231` | UDP | WireGuard |
+| `9000–9100` | TCP | Reserved for custom services |
+
+> **Tip:** If you need to change the default port of a MikroTik service, assign it a value within the `9000–9100` range — it will be immediately reachable without modifying `docker-compose.yml`.
+
+---
+
+## Configuration
+
+### Changing the RouterOS Version
+
+Set `ROUTEROS_VERSION` in your `.env` file:
+
+```sh
+ROUTEROS_VERSION=7.21.4
+```
+
+Then rebuild:
+
+```sh
+docker compose down
+docker compose up -d --build
+```
+
+### Changing the Timezone
+
+Set `TZ` in your `.env` file:
+
+```sh
+TZ=Europe/Helsinki
+```
+
+### Stopping the Container
+
+```sh
+docker compose down
+```
+
+> Your configuration is safely stored in `./data` and will persist for the next startup.
 
 ---
 
 ## Advanced: OpenVPN Configuration
 
 <details>
-  <summary>Click to expand step-by-step OpenVPN configuration guide</summary>
+<summary>Click to expand — step-by-step OpenVPN setup guide</summary>
 
-1. **IP Pool Setup:** Add a private IP range for clients. For instance, `172.24.0.0/16` or `192.168.0.0/16`.
-   ![ip_pool](./media/1.png)
+### 1. IP Pool Setup
 
-2. **Generate Certificates:** Proper certificates must be acquired/generated for OpenVPN authentication.
-   ![certificate](./media/2.png)
+Add a private IP range for VPN clients under **IP → Pool**.
+For example: `172.24.0.0/16`
 
-3. **Create OpenVPN Profile:** Set up the routing profile for your VPN clients.
-   ![profile](./media/3.png)
+![ip_pool](./media/1.png)
 
-4. **Add Secrets (Clients):** Define user credentials in the Secrets tab.
-   ![client](./media/4.png)
+### 2. Generate Certificates
 
-5. **Interface Configuration:** Create the OpenVPN Server binding in the interfaces tab. (Example uses port `4646` instead of the default `1194`).
-   ![interface](./media/5.png)
+Create or import the required certificates under **System → Certificates**.
 
-6. **Firewall / NAT:** Crucial step: Configure the masquerade rule in the IP -> Firewall -> NAT tab so clients can reach the internet.
-   ![firewall_nat](./media/6.png)
+![certificate](./media/2.png)
+
+### 3. Create an OpenVPN Profile
+
+Configure the PPP Profile under **PPP → Profiles** with the appropriate local and remote address settings.
+
+![profile](./media/3.png)
+
+### 4. Add Client Secrets
+
+Define user credentials under **PPP → Secrets**.
+
+![client](./media/4.png)
+
+### 5. Configure the OpenVPN Interface
+
+Create an OpenVPN Server interface under **Interfaces → OpenVPN Server**.
+The example below uses port `4646` instead of the default `1194`.
+
+![interface](./media/5.png)
+
+### 6. Configure NAT Masquerade
+
+This step is critical for client internet access. Add a masquerade rule under **IP → Firewall → NAT**.
+
+![firewall_nat](./media/6.png)
 
 </details>
 
 ---
 
+## GitHub Actions: Building Your Own Image
+
+A reusable workflow is included at `.github/workflows/docker-image.yml`. It builds and pushes a versioned image to both Docker Hub and GitHub Container Registry.
+
+**To trigger it manually:**
+
+1. Go to **Actions → Build and Push MikroTik Image**
+2. Click **Run workflow**
+3. Enter the RouterOS version (e.g. `7.21.4`)
+
+The workflow produces two tags:
+- `hossein3piol/mikrotik-routeros:v7.21.4`
+- `hossein3piol/mikrotik-routeros:latest`
+
+---
+
+## Troubleshooting
+
+**Container exits immediately**
+- Verify KVM is available: `ls -la /dev/kvm`
+- Check QEMU logs: `docker compose logs -f`
+
+**Cannot connect via Winbox**
+- Confirm the container is running: `docker compose ps`
+- The healthcheck polls port `8291` — wait for `healthy` status
+
+**MikroTik lost its configuration after restart**
+- Ensure `./data` directory exists and is writable
+- Never use `docker compose down -v` (removes volumes)
+
+**SSH connection refused**
+- MikroTik SSH is on port `2222`, not `22`
+- Connect with: `ssh admin@<server-ip> -p 2222`
+
+---
+
 ## Acknowledgments
-A special thanks to the original contributors and inspirations for this setup:
-- [lordbasex](https://github.com/lordbasex)
+
+- [lordbasex](https://github.com/lordbasex) — original inspiration for the QEMU-in-Docker approach
+
+---
 
 ## Support
-If you found this project helpful in your infrastructure or daily work, consider supporting its continuous development:
+
+If this project saves you time in your infrastructure work, consider supporting its development:
+
 - **USDT (TRC20):** `TH1iDsFr2wjgpptghFBn6h7DVt88pp5WoH`
 
 ---
+
+<div align="center">
+
 [![Stargazers over time](https://starchart.cc/im-ecorp/mikrotik-routeros.svg?variant=light)](https://starchart.cc/im-ecorp/mikrotik-routeros)
-```
 
-
+</div>
