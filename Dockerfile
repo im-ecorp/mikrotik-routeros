@@ -21,15 +21,12 @@ RUN apk add --no-cache \
     jq \
     bash \
     python3 \
-    unzip \
-    md5sum
+    unzip
 
 RUN mkdir /routeros && \
     wget "${ROUTEROS_URL}" -O /routeros/image.zip && \
-    wget "${ROUTEROS_URL}.md5" -O /routeros/image.zip.md5 && \
-    cd /routeros && md5sum -c image.zip.md5 && \
-    unzip image.zip -d /routeros && \
-    rm -f image.zip image.zip.md5
+    unzip /routeros/image.zip -d /routeros && \
+    rm -f /routeros/image.zip
 
 WORKDIR /routeros
 
