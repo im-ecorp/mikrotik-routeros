@@ -7,6 +7,11 @@ on:
         description: 'RouterOS Version (e.g. 7.21.4)'
         required: true
         default: '7.21.4'
+      tag_latest:
+        description: 'Also tag this version as latest?'
+        required: true
+        type: boolean
+        default: false
 
 jobs:
   build-and-push:
@@ -39,6 +44,20 @@ jobs:
       - name: Lowercase the repo owner
         run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> ${GITHUB_ENV}
 
+      - name: Generate tags
+        id: tags
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          OWNER="${OWNER}"
+
+          TAGS="hossein3piol/mikrotik-routeros:v${VERSION},hossein3piol/mikrotik-routeros:${VERSION},ghcr.io/${OWNER}/mikrotik-routeros:v${VERSION},ghcr.io/${OWNER}/mikrotik-routeros:${VERSION}"
+
+          if [ "${{ github.event.inputs.tag_latest }}" = "true" ]; then
+            TAGS="${TAGS},hossein3piol/mikrotik-routeros:latest,ghcr.io/${OWNER}/mikrotik-routeros:latest"
+          fi
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -49,8 +68,4 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             ROUTEROS_VERSION=${{ github.event.inputs.version }}
-          tags: |
-            hossein3piol/mikrotik-routeros:v${{ github.event.inputs.version }}
-            hossein3piol/mikrotik-routeros:${{ github.event.inputs.version }}
-            ghcr.io/${{ env.OWNER }}/mikrotik-routeros:v${{ github.event.inputs.version }}
-            ghcr.io/${{ env.OWNER }}/mikrotik-routeros:${{ github.event.inputs.version }}
+          tags: ${{ steps.tags.outputs.tags }}
