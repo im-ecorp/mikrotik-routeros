@@ -7,7 +7,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/im-ecorp/mikrotik-routeros?style=social)](https://github.com/im-ecorp/mikrotik-routeros)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**A production-ready, QEMU-powered environment for running MikroTik RouterOS CHR inside Docker — without sacrificing your host OS.**
+**A production-ready, QEMU-powered environment for running MikroTik RouterOS CHR inside Docker — on any architecture, without sacrificing your host OS.**
 
 </div>
 
@@ -17,18 +17,22 @@
 
 This project packages MikroTik RouterOS (Cloud Hosted Router) inside a Docker container using QEMU for full x86_64 virtualization. It is designed for infrastructure engineers who need a reproducible, version-controlled MikroTik environment on any Linux server — with complete persistence, host file sharing, and safe port routing.
 
+Because QEMU handles the x86_64 emulation layer, the Docker image itself is built for **multiple CPU architectures**. Whether your host is an AMD64 server, an ARM64 Raspberry Pi, or any other supported platform, you can pull and run the same image without any modifications.
+
 ---
 
 ## Features
 
 | Feature | Description |
 |---|---|
+| **Multi-Architecture** | Pre-built for `amd64`, `arm64`, `arm/v7`, `arm/v6`, and `386` |
 | **Persistent Storage** | Router configuration survives container rebuilds via a host-mounted virtual drive |
 | **Host ↔ Guest File Sharing** | A local directory is exposed inside MikroTik's File Manager as a virtual FAT drive |
 | **Safe SSH Access** | MikroTik SSH is remapped to port `2222` — your host SSH on port `22` is untouched |
 | **Dynamic Port Range** | Ports `9000–9100` are pre-allocated for custom services — no Compose restarts needed |
 | **Version Pinning** | Switch RouterOS versions via a single environment variable |
-| **KVM Acceleration** | Hardware virtualization enabled by default when `/dev/kvm` is available |
+| **KVM Acceleration** | Hardware virtualization is enabled automatically when `/dev/kvm` is available, with graceful fallback to software emulation |
+| **Graceful Shutdown** | SIGTERM is caught and forwarded to QEMU — MikroTik shuts down cleanly on `docker compose down` |
 
 ---
 
@@ -37,6 +41,22 @@ This project packages MikroTik RouterOS (Cloud Hosted Router) inside a Docker co
 - Linux host with Docker Engine installed
 - Docker Compose v2+
 - KVM support recommended (`/dev/kvm` available) for acceptable performance
+
+> **Note:** KVM is optional. If unavailable, QEMU falls back to software emulation automatically. Performance will be lower but the router will function correctly.
+
+---
+
+## Supported Architectures
+
+| Architecture | Tag |
+|---|---|
+| x86-64 | `linux/amd64` |
+| ARM 64-bit | `linux/arm64` |
+| ARM 32-bit v7 | `linux/arm/v7` |
+| ARM 32-bit v6 | `linux/arm/v6` |
+| x86 32-bit | `linux/386` |
+
+Docker will automatically pull the correct variant for your host platform.
 
 ---
 
@@ -55,10 +75,16 @@ Copy the example and set your desired RouterOS version:
 
 ```sh
 cp .env.example .env
-# Edit .env and set ROUTEROS_VERSION (e.g. 7.21.4)
+# Edit .env and set ROUTEROS_VERSION and optionally TZ
 ```
 
-If `.env` is omitted, the `latest` tag is used by default.
+**.env example:**
+```sh
+ROUTEROS_VERSION=7.22.2
+TZ=Asia/Tehran
+```
+
+If `.env` is omitted, the `latest` tag and `Asia/Tehran` timezone are used by default.
 
 ### 3. Start the container
 
@@ -75,7 +101,7 @@ docker compose up -d
 | **WebFig** | `http://<server-ip>:80` |
 | **API** | `<server-ip>:8728` |
 
-Default credentials: `admin` / *(no password)*
+Default credentials: `admin` / *(no password — set one immediately)*
 
 ---
 
@@ -101,6 +127,8 @@ Default credentials: `admin` / *(no password)*
               172.24.0.0/16
 ```
 
+Regardless of the host CPU architecture, QEMU always emulates an x86_64 machine for MikroTik — this is why the image runs identically on ARM and AMD64 hosts.
+
 ### Directory Structure
 
 ```
@@ -112,6 +140,9 @@ Default credentials: `admin` / *(no password)*
 │   └── qemu-ifdown            # TAP interface teardown script
 ├── data/                      # Auto-created — stores chr.vdi (persistent)
 ├── shared/                    # Auto-created — shared with MikroTik File Manager
+├── .github/
+│   └── workflows/
+│       └── docker-image.yml   # CI/CD pipeline for building & publishing images
 ├── Dockerfile
 ├── docker-compose.yml
 └── .env.example
@@ -124,7 +155,7 @@ Default credentials: `admin` / *(no password)*
 | `./data` | `/routeros/data` | Stores the persistent virtual hard drive (`chr.vdi`) |
 | `./shared` | `/routeros/shared` | Exposed to MikroTik as a virtual FAT drive |
 
-> **Important:** Never delete `./data` unless you intend to reset the router to factory defaults.
+> **Important:** Never delete `./data` unless you intend to reset the router to factory defaults. Never run `docker compose down -v`.
 
 ---
 
@@ -133,7 +164,7 @@ Default credentials: `admin` / *(no password)*
 | Port | Protocol | Service |
 |---|---|---|
 | `21` | TCP | FTP |
-| `22` (→ host `2222`) | TCP | SSH |
+| `22` → host `2222` | TCP | SSH (remapped) |
 | `23` | TCP | Telnet |
 | `80` | TCP | WebFig (HTTP) |
 | `443` | TCP | WebFig (HTTPS) |
@@ -146,7 +177,7 @@ Default credentials: `admin` / *(no password)*
 | `13231` | UDP | WireGuard |
 | `9000–9100` | TCP | Reserved for custom services |
 
-> **Tip:** If you need to change the default port of a MikroTik service, assign it a value within the `9000–9100` range — it will be immediately reachable without modifying `docker-compose.yml`.
+> **Tip:** If you need to reassign a default MikroTik service port, use any port in the `9000–9100` range — it will be immediately reachable without modifying `docker-compose.yml`.
 
 ---
 
@@ -154,25 +185,19 @@ Default credentials: `admin` / *(no password)*
 
 ### Changing the RouterOS Version
 
-Set `ROUTEROS_VERSION` in your `.env` file:
-
-```sh
-ROUTEROS_VERSION=7.21.4
-```
-
-Then rebuild:
+Update `ROUTEROS_VERSION` in your `.env` file, then recreate the container:
 
 ```sh
 docker compose down
-docker compose up -d --build
+docker compose up -d
 ```
+
+> The existing `chr.vdi` in `./data` will be reused. To start fresh with the new version's default config, delete `./data/chr-*.vdi` before starting.
 
 ### Changing the Timezone
 
-Set `TZ` in your `.env` file:
-
 ```sh
-TZ=Europe/Helsinki
+TZ=Europe/Berlin
 ```
 
 ### Stopping the Container
@@ -181,7 +206,62 @@ TZ=Europe/Helsinki
 docker compose down
 ```
 
-> Your configuration is safely stored in `./data` and will persist for the next startup.
+Your configuration is safely stored in `./data` and will persist for the next startup.
+
+---
+
+## CI/CD: Building and Publishing Images
+
+A GitHub Actions workflow is included at `.github/workflows/docker-image.yml`. It builds a multi-architecture image and pushes it to both Docker Hub and GitHub Container Registry (GHCR).
+
+### Required Secrets
+
+Configure these under **Settings → Secrets and variables → Actions**:
+
+| Secret | Description |
+|---|---|
+| `DOCKERHUB_USERNAME` | Your Docker Hub username |
+| `DOCKERHUB_TOKEN` | Docker Hub access token |
+| `CR_PAT` | GitHub Personal Access Token with `write:packages` scope |
+
+### Triggering a Build
+
+1. Go to **Actions → Build and Push MikroTik Image**
+2. Click **Run workflow**
+3. Fill in the inputs:
+
+| Input | Description |
+|---|---|
+| `version` | RouterOS version to build (e.g. `7.22.2`) |
+| `tag_latest` | Check to also push the `latest` tag for this version |
+
+### Published Tags
+
+Each build produces the following tags (both with and without the `v` prefix for maximum compatibility):
+
+```
+hossein3piol/mikrotik-routeros:7.22.2
+hossein3piol/mikrotik-routeros:v7.22.2
+ghcr.io/im-ecorp/mikrotik-routeros:7.22.2
+ghcr.io/im-ecorp/mikrotik-routeros:v7.22.2
+
+# If "tag_latest" was checked:
+hossein3piol/mikrotik-routeros:latest
+ghcr.io/im-ecorp/mikrotik-routeros:latest
+```
+
+### Building Manually on Your Server
+
+```sh
+docker build \
+  --build-arg ROUTEROS_VERSION=7.22.2 \
+  -t hossein3piol/mikrotik-routeros:v7.22.2 \
+  -t hossein3piol/mikrotik-routeros:7.22.2 \
+  .
+
+docker push hossein3piol/mikrotik-routeros:v7.22.2
+docker push hossein3piol/mikrotik-routeros:7.22.2
+```
 
 ---
 
@@ -232,39 +312,27 @@ This step is critical for client internet access. Add a masquerade rule under **
 
 ---
 
-## GitHub Actions: Building Your Own Image
-
-A reusable workflow is included at `.github/workflows/docker-image.yml`. It builds and pushes a versioned image to both Docker Hub and GitHub Container Registry.
-
-**To trigger it manually:**
-
-1. Go to **Actions → Build and Push MikroTik Image**
-2. Click **Run workflow**
-3. Enter the RouterOS version (e.g. `7.21.4`)
-
-The workflow produces two tags:
-- `hossein3piol/mikrotik-routeros:v7.21.4`
-- `hossein3piol/mikrotik-routeros:latest`
-
----
-
 ## Troubleshooting
 
 **Container exits immediately**
 - Verify KVM is available: `ls -la /dev/kvm`
-- Check QEMU logs: `docker compose logs -f`
+- Check logs: `docker compose logs -f`
+- If KVM is unavailable, the container will fall back to software emulation automatically
 
 **Cannot connect via Winbox**
 - Confirm the container is running: `docker compose ps`
-- The healthcheck polls port `8291` — wait for `healthy` status
+- The healthcheck polls port `8291` — wait until status shows `healthy`
 
 **MikroTik lost its configuration after restart**
-- Ensure `./data` directory exists and is writable
-- Never use `docker compose down -v` (removes volumes)
+- Ensure `./data` directory exists and is writable by the container
+- Never use `docker compose down -v`
 
 **SSH connection refused**
 - MikroTik SSH is on port `2222`, not `22`
 - Connect with: `ssh admin@<server-ip> -p 2222`
+
+**Bridge already exists error on restart**
+- The entrypoint checks for an existing bridge before creating one — this is handled automatically
 
 ---
 
