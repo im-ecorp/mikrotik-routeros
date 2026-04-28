@@ -48,6 +48,4 @@ jobs:
             ROUTEROS_VERSION=${{ github.event.inputs.version }}
           tags: |
             hossein3piol/mikrotik-routeros:v${{ github.event.inputs.version }}
-            hossein3piol/mikrotik-routeros:latest
             ghcr.io/${{ env.OWNER }}/mikrotik-routeros:v${{ github.event.inputs.version }}
-            ghcr.io/${{ env.OWNER }}/mikrotik-routeros:latest
