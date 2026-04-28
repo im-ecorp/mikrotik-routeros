@@ -44,8 +44,13 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/386
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             ROUTEROS_VERSION=${{ github.event.inputs.version }}
           tags: |
             hossein3piol/mikrotik-routeros:v${{ github.event.inputs.version }}
+            hossein3piol/mikrotik-routeros:${{ github.event.inputs.version }}
             ghcr.io/${{ env.OWNER }}/mikrotik-routeros:v${{ github.event.inputs.version }}
+            ghcr.io/${{ env.OWNER }}/mikrotik-routeros:${{ github.event.inputs.version }}
