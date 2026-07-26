@@ -351,7 +351,15 @@ If this project saves you time in your infrastructure work, consider supporting 
 ---
 
 <div align="center">
+  
+## Star History
 
-[![Stargazers over time](https://starchart.cc/im-ecorp/mikrotik-routeros.svg?variant=light)](https://starchart.cc/im-ecorp/mikrotik-routeros)
+<a href="https://www.star-history.com/?repos=im-ecorp%2Fmikrotik-routeros&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=im-ecorp/mikrotik-routeros&type=date&theme=dark&legend=top-left&sealed_token=Vdw0SgJpSWqG3v_GFS98zFJiIt81d03meN97sfKguGlO-dAxoFF4oKSGwOvO6wStWgbwllKXbOxtqSn5_J8JpBsEeWVkg_FI8Vm4aaARPpVGY1h6GWhqPw" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=im-ecorp/mikrotik-routeros&type=date&legend=top-left&sealed_token=Vdw0SgJpSWqG3v_GFS98zFJiIt81d03meN97sfKguGlO-dAxoFF4oKSGwOvO6wStWgbwllKXbOxtqSn5_J8JpBsEeWVkg_FI8Vm4aaARPpVGY1h6GWhqPw" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=im-ecorp/mikrotik-routeros&type=date&legend=top-left&sealed_token=Vdw0SgJpSWqG3v_GFS98zFJiIt81d03meN97sfKguGlO-dAxoFF4oKSGwOvO6wStWgbwllKXbOxtqSn5_J8JpBsEeWVkg_FI8Vm4aaARPpVGY1h6GWhqPw" />
+ </picture>
+</a>
 
 </div>
