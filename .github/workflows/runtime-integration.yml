@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 25
     env:
       IMAGE: routeros-integration:${{ github.sha }}
-      EVIDENCE: ${{ runner.temp }}/routeros-evidence
+      EVIDENCE: ${{ github.workspace }}/routeros-evidence
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
