@@ -1,0 +1,41 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      REQUIRE_COMPOSE: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Docker Compose
+        uses: docker/setup-compose-action@v1
+        with:
+          version: v5.5.1
+      - name: Require Docker Compose and validate configuration
+        run: |
+          docker compose version
+          docker compose --env-file .env.example -f docker-compose.yml config --quiet
+      - name: Check shell syntax
+        run: |
+          for script in bin/*.sh bin/qemu-ifup bin/qemu-ifdown; do
+            bash -n "$script"
+          done
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
