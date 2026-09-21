@@ -176,8 +176,12 @@ jobs:
         if: always()
         shell: python
         run: |
-          import json, os
+          import json, os, sys
           from pathlib import Path
+          # `shell: python` runs a temp file, so sys.path[0] is that temp directory,
+          # not the workspace. Without this the import below raises ModuleNotFoundError
+          # and fails the job even when the recovery itself succeeded.
+          sys.path.insert(0, str(Path.cwd()))
           from scripts.chr_recovery import identity, ORIGINAL_RUN_ID, ORIGINAL_SOURCE_SHA
           p = Path('recovery-output/report.json')
           p.parent.mkdir(parents=True, exist_ok=True)

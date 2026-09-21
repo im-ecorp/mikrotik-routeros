@@ -187,3 +187,34 @@ by these probes alone; the actual per-version Docker matrix remains required.
 
 A local environment without Docker can run protocol/unit tests and the offline
 QEMU proof but must report Docker integration as **not run**, not passed.
+
+### What `authentication/serial_timeout` looked like in run 35656139663
+
+The first hosted run in which every variant reached runtime split cleanly in two:
+
+| | `duration_seconds` | shutdowns recorded | checks |
+| --- | --- | --- | --- |
+| 7.23.5, 7.24.3, 7.24.4, 7.25beta5 — passed | 133.46, 136.69, 137.38, 138.12 | 3 | 21 |
+| 6.49.21, 6.49.22, 7.24.2 — failed | 243.81, 246.05, 247.74 | **1** | 11–14 |
+
+Every failure finished the first phase: health `healthy`, fresh guest with the
+expected `guest_version`, DHCP `bound` at the Docker address, the seed-version
+check, and the full disabled → reenabled → recovery DHCP cycle. Each then
+recorded a **clean** `restart` shutdown (`guest_shutdown: true`, `qemu_returncode`
+0) and stopped. The extra ~110 seconds before exit is a serial `expect` elapsing,
+not work being done.
+
+So the guest does not come back usable from the *first* restart, and the failure
+surfaces as a timeout rather than a persistence error. That is consistent with the
+6.49.22 cold-restart observation above: if the admin password is not retained, the
+harness sends the stored password, RouterOS simply re-prompts `Login:`, and none
+of `software license? [Y/n]`, `new password>` or the prompt ever appear. The
+`Unexpected password reset on persisted guest` guard only fires when `new password>`
+is actually seen, so this path cannot reach it.
+
+The three are not a contiguous version range — 7.24.2 failed while 7.24.1, 7.24.3
+and 7.24.4 passed — so a repeat run is what distinguishes a guest-side persistence
+bug from timing under three parallel TCG guests. Treat the classification as
+`authentication/serial_timeout` only; do not record a persistence claim without a
+transcript that shows the prompt, and do not weaken the restart or authentication
+gates to make it pass.
