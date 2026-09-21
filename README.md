@@ -7,7 +7,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/im-ecorp/mikrotik-routeros?style=social)](https://github.com/im-ecorp/mikrotik-routeros)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**A production-ready, QEMU-powered environment for running MikroTik RouterOS CHR inside Docker — on any architecture, without sacrificing your host OS.**
+**MikroTik RouterOS CHR inside Docker, with persistent disks, guest-aware health checks, and bounded clean shutdown.**
 
 </div>
 
@@ -25,14 +25,14 @@ Because QEMU handles the x86_64 emulation layer, the Docker image itself is buil
 
 | Feature | Description |
 |---|---|
-| **Multi-Architecture** | Pre-built for `amd64`, `arm64`, `arm/v7`, `arm/v6`, and `386` |
+| **Multi-Architecture** | New wrapper releases target `amd64` and `arm64`; qualification differs by platform |
 | **Persistent Storage** | Router configuration survives container rebuilds via a host-mounted virtual drive |
 | **Host ↔ Guest File Sharing** | A local directory is exposed inside MikroTik's File Manager as a virtual FAT drive |
 | **Safe SSH Access** | MikroTik SSH is remapped to port `2222` — your host SSH on port `22` is untouched |
 | **Dynamic Port Range** | Ports `9000–9100` are pre-allocated for custom services — no Compose restarts needed |
 | **Version Pinning** | Pin the container and factory seed version; upgrade existing guests inside RouterOS |
 | **KVM Acceleration** | Hardware virtualization is enabled automatically when `/dev/kvm` is available, with graceful fallback to software emulation |
-| **Shutdown Handling** | SIGTERM is forwarded to QEMU; shut down RouterOS first for offline backups |
+| **Shutdown Handling** | Requests QMP guest poweroff, verifies guest-origin shutdown, and reports forced fallback |
 
 ---
 
@@ -48,15 +48,14 @@ Because QEMU handles the x86_64 emulation layer, the Docker image itself is buil
 
 ## Supported Architectures
 
-| Architecture | Tag |
+| Architecture | New wrapper release status |
 |---|---|
-| x86-64 | `linux/amd64` |
-| ARM 64-bit | `linux/arm64` |
-| ARM 32-bit v7 | `linux/arm/v7` |
-| ARM 32-bit v6 | `linux/arm/v6` |
-| x86 32-bit | `linux/386` |
+| `linux/amd64` | Qualified through Docker runtime integration before publication |
+| `linux/arm64` | Cross-built; not runtime-qualified |
 
-Docker will automatically pull the correct variant for your host platform.
+Legacy tags may include `arm/v7`, `arm/v6`, and `386`; these platforms are not
+published by the new wrapper release workflow. Do not substitute a legacy image
+and assume it contains the new health, shutdown, or disk migration code.
 
 ---
 
@@ -78,15 +77,19 @@ cp .env.example .env
 # Edit .env: set ROUTEROS_VERSION, MANAGEMENT_BIND_IP and optionally TZ
 ```
 
-**.env example:**
+**.env example (use a published wrapper release):**
 ```sh
-ROUTEROS_VERSION=7.22.2
+ROUTEROS_VERSION=7.21.4-r1.0.0
 TZ=Asia/Tehran
 # Recommended for a new setup; remote access requires an SSH tunnel:
 MANAGEMENT_BIND_IP=127.0.0.1
 ```
 
-If `.env` is omitted, the `latest` tag and `Asia/Tehran` timezone are used by default.
+If `.env` is omitted, the `7.21.4-r1.0.0` tag and `Asia/Tehran` timezone are used by default.
+This Compose file requires a published wrapper tag containing
+`/routeros/bin/runtime.py`; legacy `latest`, `7.21.4`, and `v7.21.4` images do not
+satisfy its health-check contract and are not overwritten by wrapper releases.
+Confirm tag availability in the corresponding GitHub Release before starting.
 `MANAGEMENT_BIND_IP` defaults to `0.0.0.0` (all host IPv4 addresses) when unset or
 empty. The checked-in `.env.example` preserves that compatibility default; change
 it explicitly to `127.0.0.1` before first boot for local/tunneled management.
@@ -142,7 +145,7 @@ Port publication does not enable a RouterOS service or configure its firewall.
               172.24.0.0/16
 ```
 
-Regardless of the host CPU architecture, QEMU always emulates an x86_64 machine for MikroTik — this is why the image runs identically on ARM and AMD64 hosts.
+QEMU always emulates an x86_64 guest. ARM64 uses software emulation; a successful ARM64 image build is not an ARM runtime qualification. See [runtime requirements](docs/runtime.md).
 
 ### Directory Structure
 
@@ -151,7 +154,7 @@ Regardless of the host CPU architecture, QEMU always emulates an x86_64 machine 
 ├── bin/
 │   ├── entrypoint.sh          # Container entrypoint & QEMU launcher
 │   ├── init-disk.py           # Stable disk selection & legacy migration
-│   ├── generate-dhcpd-conf.py # Dynamic DHCP config generator
+│   ├── runtime.py            # Network validation, health, QMP & supervision
 │   ├── qemu-ifup              # TAP interface bring-up script
 │   └── qemu-ifdown            # TAP interface teardown script
 ├── data/                      # Auto-created — stores chr.vdi (persistent)
@@ -249,56 +252,31 @@ and never publishes or deploys. Networking tests render actual Compose JSON;
 standalone `COMPOSE_BINARY` and needs no Docker daemon. Missing Compose may skip
 locally, but is an error in CI. Existing ShellCheck findings are not a new gate.
 
-A GitHub Actions workflow is included at `.github/workflows/docker-image.yml`. It builds a multi-architecture image and pushes it to both Docker Hub and GitHub Container Registry (GHCR).
+`Runtime integration` builds the actual Dockerfile with its default seed on an
+isolated hosted runner. The fresh guest version must match the image's nonempty
+`io.mikrotik-routeros.seed.version` OCI label. It also tests DHCP, HTTP/SSH TCP
+forwarding, UDP DNS, health transitions, guest-clean stop/start, and recreation
+persistence. Its evidence is uploaded separately from authentication-bearing
+disks. See [runtime validation](docs/runtime.md).
 
-### Required Secrets
+`Publish wrapper release` is manual and main-only. It requires successful `Validate`
+and `Runtime integration` main-push runs for the **exact source SHA** before
+publishing to Docker Hub and GHCR. Inputs are `release_version` (for example
+`1.0.0`) and `routeros_version` (the runtime-tested seed, currently `7.21.4`).
+Docker Hub uses `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`; GHCR uses the scoped
+workflow `GITHUB_TOKEN`, not a personal access token.
 
-Configure these under **Settings → Secrets and variables → Actions**:
+Example release tags (availability is established by the corresponding GitHub Release):
 
-| Secret | Description |
-|---|---|
-| `DOCKERHUB_USERNAME` | Your Docker Hub username |
-| `DOCKERHUB_TOKEN` | Docker Hub access token |
-| `CR_PAT` | GitHub Personal Access Token with `write:packages` scope |
-
-### Triggering a Build
-
-1. Go to **Actions → Build and Push MikroTik Image**
-2. Click **Run workflow**
-3. Fill in the inputs:
-
-| Input | Description |
-|---|---|
-| `version` | RouterOS version to build (e.g. `7.22.2`) |
-| `tag_latest` | Check to also push the `latest` tag for this version |
-
-### Published Tags
-
-Each build produces the following tags (both with and without the `v` prefix for maximum compatibility):
-
-```
-hossein3piol/mikrotik-routeros:7.22.2
-hossein3piol/mikrotik-routeros:v7.22.2
-ghcr.io/im-ecorp/mikrotik-routeros:7.22.2
-ghcr.io/im-ecorp/mikrotik-routeros:v7.22.2
-
-# If "tag_latest" was checked:
-hossein3piol/mikrotik-routeros:latest
-ghcr.io/im-ecorp/mikrotik-routeros:latest
+```text
+hossein3piol/mikrotik-routeros:7.21.4-r1.0.0
+ghcr.io/im-ecorp/mikrotik-routeros:7.21.4-r1.0.0
 ```
 
-### Building Manually on Your Server
-
-```sh
-docker build \
-  --build-arg ROUTEROS_VERSION=7.22.2 \
-  -t hossein3piol/mikrotik-routeros:v7.22.2 \
-  -t hossein3piol/mikrotik-routeros:7.22.2 \
-  .
-
-docker push hossein3piol/mikrotik-routeros:v7.22.2
-docker push hossein3piol/mikrotik-routeros:7.22.2
-```
+A `sha-<full-source-SHA>` tag identifies the same manifest. Existing tags are
+refused; `latest`, `7.21.4`, and `v7.21.4` are not overwritten. OCI labels record
+wrapper version, source revision, and seed separately. See [release procedure,
+platform qualifications, and recovery](docs/releases.md).
 
 ---
 
@@ -361,7 +339,8 @@ This step is critical for client internet access. Add a masquerade rule under **
 
 **Cannot connect via Winbox**
 - Confirm the container is running: `docker compose ps`
-- The healthcheck polls port `8291` — wait until status shows `healthy`
+- Health checks verify running QEMU plus fresh guest ARP, not Winbox itself.
+- After the boot grace period, inspect guest service and firewall settings separately.
 
 **MikroTik lost its configuration after restart or a tag change**
 - Verify the same `./data` directory is mounted.

@@ -1,71 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
-DATA_DIR="/routeros/data"
-SHARED_DIR="/routeros/shared"
+# Validate private Docker bridge topology before touching disks or interfaces.
+python3 /routeros/bin/runtime.py prepare
+DATA_DIR=/routeros/data
+SHARED_DIR=/routeros/shared
 mkdir -p "$SHARED_DIR"
-
-# Initialize/migrate before touching networking. Existing guest disks take priority
-# over the seed bundled with the container; changing tags never upgrades the guest.
 IMAGE_FILE=$(python3 /routeros/bin/init-disk.py "$DATA_DIR" "/routeros/$ROUTEROS_IMAGE")
 
-QEMU_BRIDGE='qemubr0'
-DUMMY_DHCPD_IP='10.0.0.254'
-QEMU_IFUP='/routeros/bin/qemu-ifup'
-QEMU_IFDOWN='/routeros/bin/qemu-ifdown'
-DHCPD_CONF_FILE='/routeros/dhcpd.conf'
+ip addr flush dev eth0
+ip link add qemubr0 type bridge
+ip link set dev eth0 master qemubr0
+ip link set dev eth0 up
+ip link set dev qemubr0 up
+: > /run/routeros/udhcpd.leases
 
-function default_intf() {
-    ip -json route show | jq -r '.[] | select(.dst == "default") | .dev'
-}
-
-/routeros/bin/generate-dhcpd-conf.py $QEMU_BRIDGE > $DHCPD_CONF_FILE
-default_dev=$(default_intf)
-
-ip addr flush dev "$default_dev"
-
-if ! ip link show "$QEMU_BRIDGE" &>/dev/null; then
-    ip link add "$QEMU_BRIDGE" type bridge
-fi
-
-ip link set dev "$default_dev" master "$QEMU_BRIDGE"
-ip link set dev "$default_dev" up
-ip link set dev "$QEMU_BRIDGE" up
-
-touch /var/lib/udhcpd/udhcpd.leases
-udhcpd -I $DUMMY_DHCPD_IP -f $DHCPD_CONF_FILE &
-
-# Detect KVM availability
-KVM_FLAG=""
-if [ -e /dev/kvm ]; then
-    echo "KVM detected — enabling hardware acceleration."
-    KVM_FLAG="-enable-kvm"
+ACCEL=()
+if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+    ACCEL=(-enable-kvm)
 else
-    echo "WARNING: KVM not available — running in software emulation mode (slower)."
+    echo 'KVM unavailable; using QEMU software emulation.'
 fi
-
-# Graceful shutdown handler
-QEMU_PID=""
-cleanup() {
-    echo "Shutting down MikroTik RouterOS..."
-    if [ -n "$QEMU_PID" ]; then
-        kill -TERM "$QEMU_PID" 2>/dev/null || true
-        wait "$QEMU_PID" 2>/dev/null || true
-    fi
-    echo "MikroTik stopped."
-}
-trap cleanup SIGTERM SIGINT
-
-echo "Starting MikroTik RouterOS..."
-
-qemu-system-x86_64 \
-    -nographic -serial mon:stdio \
-    -m 256 \
-    $KVM_FLAG \
-    "$@" \
-    -hda "$IMAGE_FILE" \
-    -drive file=fat:rw:"$SHARED_DIR",format=raw,id=fatdrive \
-    -nic tap,id=qemu0,script=$QEMU_IFUP,downscript=$QEMU_IFDOWN &
-
-QEMU_PID=$!
-wait $QEMU_PID
+# Serial and QMP stay private UNIX sockets, never Docker logs or TCP listeners.
+# runtime.py is PID 1, reaps both children, and requests bounded guest poweroff.
+exec python3 /routeros/bin/runtime.py supervise qemu-system-x86_64 \
+    -display none -monitor none \
+    -serial unix:/run/routeros/serial.sock,server=on,wait=off \
+    -qmp unix:/run/routeros/qmp.sock,server=on,wait=off \
+    -m 256 "${ACCEL[@]}" "$@" \
+    -drive "file=$IMAGE_FILE,format=vdi,if=ide" \
+    -drive "file=fat:rw:$SHARED_DIR,format=raw,id=fatdrive" \
+    -nic tap,id=qemu0,script=/routeros/bin/qemu-ifup,downscript=/routeros/bin/qemu-ifdown

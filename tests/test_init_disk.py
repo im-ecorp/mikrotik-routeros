@@ -79,8 +79,9 @@ class DiskInitializationTests(unittest.TestCase):
                     self.assertEqual(list(self.data.iterdir()), [path])
 
     def test_entrypoint_uses_stable_disk_across_image_versions(self):
-        # Exercise the actual entrypoint initialization, before any network setup.
-        prefix = (ROOT / "bin" / "entrypoint.sh").read_text().split("QEMU_BRIDGE=", 1)[0]
+        # Exercise the real disk block only; topology validation is tested separately.
+        entrypoint = (ROOT / "bin" / "entrypoint.sh").read_text()
+        prefix = 'set -euo pipefail\nDATA_DIR=' + entrypoint.split('DATA_DIR=', 1)[1].split('\nip addr flush', 1)[0]
         prefix = prefix.replace("/routeros", str(self.root))
         (self.root / "bin").mkdir()
         (self.root / "bin" / SCRIPT.name).write_bytes(SCRIPT.read_bytes())

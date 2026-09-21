@@ -53,8 +53,9 @@ Linux, Bash, and execution from the Compose project directory.
    `/system shutdown` and confirm shutdown. Only then type `halted` on the host.
    The block requires the container state to be `exited` before Compose stop and
    copying. If it has not exited yet, wait and check; do not force-stop the guest.
-   The current entrypoint's SIGTERM handler alone does **not** guarantee
-   guest-clean shutdown.
+   New wrapper releases request QMP guest shutdown and record its outcome; older
+   images merely terminate QEMU. This explicit offline procedure works with both
+   and avoids treating a forced fallback as a clean backup.
 3. The block creates a new private backup directory without overwriting a backup.
    It deliberately leaves the restart policy disabled, including on failure.
    `data` and optional `shared` must be real directories with no nested symlinks;

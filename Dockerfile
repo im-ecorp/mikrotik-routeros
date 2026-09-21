@@ -1,9 +1,18 @@
-FROM alpine:3.19
+FROM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 LABEL org.opencontainers.image.authors="Hossein Sepiol <mhsaeidi81@gmail.com>"
 LABEL description="MikroTik RouterOS CHR running inside Docker using QEMU"
 
+# Seed selection initializes new disks; it never upgrades an existing guest.
 ARG ROUTEROS_VERSION=7.21.4
+ARG WRAPPER_VERSION=dev
+ARG SOURCE_REVISION=unknown
+ARG SOURCE_URL=https://github.com/im-ecorp/mikrotik-routeros
+
+LABEL org.opencontainers.image.version=$WRAPPER_VERSION \
+      org.opencontainers.image.revision=$SOURCE_REVISION \
+      org.opencontainers.image.source=$SOURCE_URL \
+      io.mikrotik-routeros.seed.version=$ROUTEROS_VERSION
 
 ENV ROUTEROS_VERSION=$ROUTEROS_VERSION
 ENV ROUTEROS_IMAGE=chr-$ROUTEROS_VERSION.vdi

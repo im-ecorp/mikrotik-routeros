@@ -1,71 +1,293 @@
-name: Build and Push MikroTik Image
+name: Publish wrapper release
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'RouterOS Version (e.g. 7.21.4)'
+      release_version:
+        description: 'Wrapper SemVer without v (new, never reused)'
         required: true
+        type: string
+        default: '1.0.0'
+      routeros_version:
+        description: 'RouterOS seed version; must match the tested Dockerfile default'
+        required: true
+        type: string
         default: '7.21.4'
-      tag_latest:
-        description: 'Also tag this version as latest?'
-        required: true
-        type: boolean
-        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wrapper-release
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: ${{ inputs.release_version }}
+  ROUTEROS_VERSION: ${{ inputs.routeros_version }}
+  SOURCE_SHA: ${{ github.sha }}
+  SOURCE_REF: ${{ github.ref }}
+  SOURCE_URL: https://github.com/im-ecorp/mikrotik-routeros
+  DOCKERHUB_IMAGE: hossein3piol/mikrotik-routeros
+  GHCR_IMAGE: ghcr.io/im-ecorp/mikrotik-routeros
 
 jobs:
-  build-and-push:
+  validate:
+    if: github.ref == 'refs/heads/main' && github.repository == 'im-ecorp/mikrotik-routeros'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      image_tag: ${{ steps.policy.outputs.image_tag }}
+      sha_tag: ${{ steps.policy.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate dispatch policy
+        id: policy
+        shell: python
+        run: |
+          # BEGIN RELEASE POLICY
+          import os
+          import re
+          from pathlib import Path
 
+          def validate_inputs(release, seed, ref, sha, tested_seed):
+              semver = r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+              if not re.fullmatch(semver, release) or len(release) > 32:
+                  raise ValueError('release_version must be canonical X.Y.Z without v')
+              if not re.fullmatch(semver, seed) or seed != tested_seed:
+                  raise ValueError('routeros_version must match the runtime-tested Dockerfile seed')
+              if ref != 'refs/heads/main' or not re.fullmatch(r'[0-9a-f]{40}', sha):
+                  raise ValueError('release requires an exact main commit SHA')
+              return [f'{seed}-r{release}', f'sha-{sha}']
+
+          if __name__ == '__main__':
+              tested_seed = re.search(r'^ARG ROUTEROS_VERSION=(\S+)$', Path('Dockerfile').read_text(), re.M).group(1)
+              tags = validate_inputs(os.environ['RELEASE_VERSION'], os.environ['ROUTEROS_VERSION'],
+                                     os.environ['SOURCE_REF'], os.environ['SOURCE_SHA'], tested_seed)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                  output.write(f'image_tag={tags[0]}\nsha_tag={tags[1]}\n')
+          # END RELEASE POLICY
+      - name: Require successful main CI on this exact source SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          # BEGIN GATE POLICY
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          def require_run(runs, sha):
+              matching = [r for r in runs if r['head_sha'] == sha and
+                          r['head_branch'] == 'main' and r['event'] == 'push']
+              if not matching:
+                  raise ValueError('No main push CI run for the exact release SHA')
+              latest = max(matching, key=lambda r: (r['id'], r.get('run_attempt', 1)))
+              if latest['status'] != 'completed' or latest['conclusion'] != 'success':
+                  raise ValueError('Latest exact-SHA main push CI run must finish successfully')
+              return latest
+
+          def require_job(jobs, name):
+              matching = [j for j in jobs if j['name'] == name]
+              if len(matching) != 1 or matching[0]['status'] != 'completed' or matching[0]['conclusion'] != 'success':
+                  raise ValueError(f'Required CI job {name} must complete successfully, not skip')
+
+          if __name__ == '__main__':
+              repository = os.environ['GITHUB_REPOSITORY']
+              sha = os.environ['SOURCE_SHA']
+              headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                         'Accept': 'application/vnd.github+json',
+                         'X-GitHub-Api-Version': '2022-11-28'}
+              for workflow in ('validate.yml', 'runtime-integration.yml'):
+                  query = urllib.parse.urlencode({'head_sha': sha, 'branch': 'main',
+                                                   'event': 'push', 'per_page': 100})
+                  url = f'https://api.github.com/repos/{repository}/actions/workflows/{workflow}/runs?{query}'
+                  runs = []
+                  while url:
+                      with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
+                          runs.extend(json.load(response)['workflow_runs'])
+                          links = response.headers.get('Link', '')
+                      url = next((part.split('>')[0].strip('< ') for part in links.split(',')
+                                  if 'rel="next"' in part), None)
+                  run = require_run(runs, sha)
+                  url = f"https://api.github.com/repos/{repository}/actions/runs/{run['id']}/attempts/{run.get('run_attempt', 1)}/jobs?per_page=100"
+                  jobs = []
+                  while url:
+                      with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
+                          jobs.extend(json.load(response)['jobs'])
+                          links = response.headers.get('Link', '')
+                      url = next((part.split('>')[0].strip('< ') for part in links.split(',')
+                                  if 'rel="next"' in part), None)
+                  require_job(jobs, 'validate' if workflow == 'validate.yml' else 'integration')
+                  print(f"{workflow}: {run['html_url']}")
+                  with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                      summary.write(f"- Exact-SHA gate: [{workflow}]({run['html_url']})\n")
+          # END GATE POLICY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: docker/setup-compose-action@v1
+        with:
+          version: v5.5.1
+      - name: Validate source again before publishing
+        env:
+          REQUIRE_COMPOSE: '1'
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          docker compose --env-file .env.example -f docker-compose.yml config --quiet
+          for script in bin/*.sh bin/qemu-ifup bin/qemu-ifdown; do bash -n "$script"; done
+          python3 -m unittest discover -s tests -v
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
-
+    env:
+      IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
+      SHA_TAG: ${{ needs.validate.outputs.sha_tag }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - name: Refuse existing tags and uncertain registry responses
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          # BEGIN REGISTRY POLICY
+          import base64
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          def manifest_absent(status, body):
+              try:
+                  errors = json.loads(body)['errors']
+                  return status == 404 and bool(errors) and all(e['code'] == 'MANIFEST_UNKNOWN' for e in errors)
+              except (ValueError, KeyError, TypeError):
+                  return False
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+          def fetch(url, headers):
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
+                      return response.status, response.read()
+              except urllib.error.HTTPError as error:
+                  return error.code, error.read()
+
+          if __name__ == '__main__':
+              # Also reserve wrapper SemVer independently of the seed image tag.
+              status, _ = fetch(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/git/ref/tags/v{os.environ['RELEASE_VERSION']}",
+                                {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              if status != 404:
+                  raise SystemExit(f'Wrapper Git tag already exists or cannot be checked (HTTP {status})')
+              registries = [
+                  ('registry-1.docker.io', 'https://auth.docker.io/token', 'registry.docker.io',
+                   os.environ['DOCKERHUB_IMAGE'], os.environ['HUB_USER'], os.environ['HUB_TOKEN']),
+                  ('ghcr.io', 'https://ghcr.io/token', 'ghcr.io',
+                   os.environ['GHCR_IMAGE'].removeprefix('ghcr.io/'), os.environ['GH_USER'], os.environ['GH_TOKEN']),
+              ]
+              for registry, endpoint, service, image, user, secret in registries:
+                  if not user or not secret:
+                      raise SystemExit('Registry credentials are missing')
+                  basic = base64.b64encode(f'{user}:{secret}'.encode()).decode()
+                  query = urllib.parse.urlencode({'service': service, 'scope': f'repository:{image}:pull'})
+                  status, body = fetch(endpoint + '?' + query, {'Authorization': 'Basic ' + basic})
+                  if status != 200:
+                      raise SystemExit(f'Registry authentication failed for {registry} (HTTP {status})')
+                  data = json.loads(body)
+                  token = data.get('token') or data['access_token']
+                  for tag in (os.environ['IMAGE_TAG'], os.environ['SHA_TAG']):
+                      status, body = fetch(f'https://{registry}/v2/{image}/manifests/{tag}',
+                                           {'Authorization': 'Bearer ' + token,
+                                            'Accept': 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'})
+                      if not manifest_absent(status, body):
+                          raise SystemExit(f'Refusing existing or unverifiable tag {registry}/{image}:{tag} (HTTP {status})')
+                      print(f'Confirmed unused: {registry}/{image}:{tag}')
+          # END REGISTRY POLICY
+      - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.CR_PAT }}
-
-      - name: Lowercase the repo owner
-        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> ${GITHUB_ENV}
-
-      - name: Generate tags
-        id: tags
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          OWNER="${OWNER}"
-
-          TAGS="hossein3piol/mikrotik-routeros:v${VERSION},hossein3piol/mikrotik-routeros:${VERSION},ghcr.io/${OWNER}/mikrotik-routeros:v${VERSION},ghcr.io/${OWNER}/mikrotik-routeros:${VERSION}"
-
-          if [ "${{ github.event.inputs.tag_latest }}" = "true" ]; then
-            TAGS="${TAGS},hossein3piol/mikrotik-routeros:latest,ghcr.io/${OWNER}/mikrotik-routeros:latest"
-          fi
-
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and publish the two validated wrapper tags
+        id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/386
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
           build-args: |
-            ROUTEROS_VERSION=${{ github.event.inputs.version }}
-          tags: ${{ steps.tags.outputs.tags }}
+            ROUTEROS_VERSION=${{ env.ROUTEROS_VERSION }}
+            WRAPPER_VERSION=${{ env.RELEASE_VERSION }}
+            SOURCE_REVISION=${{ env.SOURCE_SHA }}
+            SOURCE_URL=${{ env.SOURCE_URL }}
+          tags: |
+            ${{ env.DOCKERHUB_IMAGE }}:${{ env.IMAGE_TAG }}
+            ${{ env.DOCKERHUB_IMAGE }}:${{ env.SHA_TAG }}
+            ${{ env.GHCR_IMAGE }}:${{ env.IMAGE_TAG }}
+            ${{ env.GHCR_IMAGE }}:${{ env.SHA_TAG }}
+      - name: Read back every published tag and record manifest provenance
+        env:
+          EXPECTED_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          records = []
+          for image in (os.environ['DOCKERHUB_IMAGE'], os.environ['GHCR_IMAGE']):
+              for tag in (os.environ['IMAGE_TAG'], os.environ['SHA_TAG']):
+                  ref = f'{image}:{tag}'
+                  raw = subprocess.check_output(['docker', 'buildx', 'imagetools', 'inspect', '--raw', ref])
+                  digest = 'sha256:' + hashlib.sha256(raw).hexdigest()
+                  # Buildx prints the raw JSON verbatim, followed by a newline on some versions.
+                  if digest != os.environ['EXPECTED_DIGEST']:
+                      digest = 'sha256:' + hashlib.sha256(raw.rstrip(b'\n')).hexdigest()
+                  if digest != os.environ['EXPECTED_DIGEST']:
+                      raise SystemExit(f'Read-back digest mismatch: {ref}')
+                  manifest = json.loads(raw)
+                  platforms = sorted(f"{m['platform']['os']}/{m['platform']['architecture']}"
+                                     for m in manifest['manifests'] if m['platform']['os'] != 'unknown')
+                  if platforms != ['linux/amd64', 'linux/arm64']:
+                      raise SystemExit(f'Unexpected platform list: {ref}: {platforms}')
+                  records.append({'image': ref, 'digest': digest, 'platforms': platforms})
+          report = {'wrapper_version': os.environ['RELEASE_VERSION'], 'seed_version': os.environ['ROUTEROS_VERSION'],
+                    'source_sha': os.environ['SOURCE_SHA'], 'source_url': os.environ['SOURCE_URL'],
+                    'run_url': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+                    'runtime_tested': ['linux/amd64'], 'build_only': ['linux/arm64'], 'images': records}
+          Path('release-manifest.json').write_text(json.dumps(report, indent=2) + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Published wrapper release\n```json\n' + json.dumps(report, indent=2) + '\n```\n')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
