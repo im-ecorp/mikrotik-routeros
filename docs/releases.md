@@ -1,75 +1,110 @@
-# Wrapper releases and provenance
+# CHR image versions and provenance
 
-## Versions are separate
+## Public versions are CHR versions
 
-- **Wrapper release:** `v1.0.0` identifies this repository's container/runtime code.
-- **RouterOS seed:** `7.21.4` identifies the bundled vendor VDI used only to initialize a new persistent disk. A new container or seed does **not** upgrade an existing RouterOS guest. Check the running guest's version separately.
-- **Container tags:** `7.21.4-r1.0.0` and `sha-<full 40-character source SHA>` in both `hossein3piol/mikrotik-routeros` and `ghcr.io/im-ecorp/mikrotik-routeros`.
+Use `7.21.4` or `v7.21.4` in both repositories:
 
-The wrapper publisher never writes `latest`, `7.21.4`, or `v7.21.4`. Existing images and those compatibility tags are left untouched; they do not automatically receive wrapper fixes. Use a wrapper tag or, preferably, the recorded `@sha256:...` manifest digest.
+```text
+hossein3piol/mikrotik-routeros:7.21.4
+ghcr.io/im-ecorp/mikrotik-routeros:7.21.4
+```
 
-`WRAPPER_VERSION`, `SOURCE_REVISION`, and `SOURCE_URL` build arguments populate the OCI version, revision, and source labels. `io.mikrotik-routeros.seed.version` records the seed independently. Local unlabelled builds intentionally default to wrapper `dev` / revision `unknown`, not a claimed release.
+These aliases identify the bundled **RouterOS CHR seed**, used only to initialize a new persistent disk. Replacing a container does **not** upgrade an existing guest. Check the running RouterOS version separately. Compose and `.env.example` default to `7.21.4`.
 
-## Supported Alpine base and platform scope
+CHR version aliases may receive tested container/runtime fixes **only with explicit overwrite approval**. Use the recorded `@sha256:...` index digest for immutable deployments. `sha-<full 40-character source SHA>` is an immutable source tag: the normal publisher refuses it if it already exists in either registry, even with alias overwrite approval.
 
-The Dockerfile pins the **multi-platform index**, not an amd64-only manifest:
+No publisher writes `latest`, deletes images, or creates new `-r` suffix tags. The existing Docker Hub `7.21.4-r1.0.0` reference is preserved read-only; it is not a new public versioning scheme and must not be newly published to GHCR. Previous documentation described suffix-tag publication and untouched CHR aliases. That policy is superseded by this explicitly approved CHR-only policy.
+
+`WRAPPER_VERSION` / OCI `org.opencontainers.image.version` remain internal container-code metadata, not the public CHR version. `SOURCE_REVISION` and `SOURCE_URL` populate revision/source labels; `io.mikrotik-routeros.seed.version` records CHR separately. Local builds default to internal wrapper `dev` / revision `unknown` rather than claiming a release.
+
+## Release gates and dispatch
+
+`Publish CHR image` (`docker-image.yml`) accepts only manual dispatch on `refs/heads/main` in `im-ecorp/mikrotik-routeros`. Both checkouts and build revision use the dispatch event's exact `github.sha`; no arbitrary source-ref input exists.
+
+Before publishing:
+
+1. Validate canonical `X.Y.Z` internal `release_version` and CHR `routeros_version`. The CHR seed must equal the Dockerfile default on this SHA. A different seed requires a source change and fresh CI, not a dispatch override. Inputs enter scripts through environment variables, not shell interpolation.
+2. Require the latest **main push** runs of `validate.yml` and `runtime-integration.yml` for that exact source SHA to have completed successfully. Their latest-attempt jobs named `validate` and `integration` must explicitly succeed, not skip. PR merge checks, older commits, manual runtime runs, failed/skipped workflows, and pending runs do not qualify.
+3. Run the unit suite, required Compose rendering, and shell syntax checks again. Publishing depends on this validation job.
+4. Read all six intended references and both `latest` references through authenticated registry APIs. Only `404 MANIFEST_UNKNOWN` establishes absence; HTTP auth/rate-limit/server errors, ambiguous 404s, malformed JSON, missing digest headers, and header/body digest mismatches fail closed. Existing CHR aliases require boolean `approve_version_overwrite=true`. Existing SHA tags always stop the normal publisher. Internal wrapper metadata does not reserve a public Git tag.
+5. Build `linux/amd64` and `linux/arm64` with provenance and SBOM, then publish only the CHR version, `v` version, and SHA reference in each registry. Read all six back: their exact index digest must match BuildKit output and their platform list must be amd64 plus arm64, excluding attestation descriptors. Confirm `latest` equals its preflight digest in both registries.
+
+For a new CHR version with absent aliases, leave approval false:
+
+```sh
+gh workflow run docker-image.yml --repo im-ecorp/mikrotik-routeros --ref main \
+  -f release_version=1.0.0 -f routeros_version=7.21.4 \
+  -f approve_version_overwrite=false
+```
+
+For an intentional tested fix to **existing** CHR aliases, review the source and target digests, then explicitly set `-f approve_version_overwrite=true`. This never permits overwriting a SHA tag. Do not use a new build to recover the already-tested image described below.
+
+Docker Hub requires `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. GHCR uses the job-scoped `github.token` with `packages: write`; no `CR_PAT` is consumed. The existing GHCR package must grant this repository Actions write access. Validation has `contents: read` / `actions: read`; publishing has `contents: read` / `packages: write`. Checkouts do not retain credentials.
+
+## Bounded exact-digest recovery
+
+`Recover tested CHR 7.21.4 image` (`recover-chr-image.yml`) is a separate manual, main-only workflow. **Its presence is not proof that recovery has run.** Before deploying the new Compose default, require a successful recovery run and its verified `recovery-manifest.json`. Until then the CHR aliases may still point at the previous image, which lacks the runtime health-check contract.
+
+Recovery does not build anything. `scripts/image_release.py` hardcodes the authorization boundary:
+
+| Item | Exact value |
+| --- | --- |
+| Existing source repository | `hossein3piol/mikrotik-routeros` |
+| Source SHA | `f6108c7672800618fd78e407ef79fcd15f69eef8` |
+| CHR seed | `7.21.4` |
+| Desired index digest | `sha256:9dc63b8d19af9bb3e343fd946c487189cdf912fc822f3f829455b616b91d8425` |
+| Allowed old alias digest | `sha256:026123ea23088ceb1338b6d7d0d62ad06fd160c9394996e00c5a3e31c20e7449` |
+| Preserved `latest` digest, both registries | `sha256:be880f3daf8926d6f51f31694bf7e1085ebd1113d1da8c6778afe1bd51b49569` |
+
+The source was qualified by [Validate 35579006980](https://github.com/im-ecorp/mikrotik-routeros/actions/runs/35579006980) and [Runtime integration 35579006957](https://github.com/im-ecorp/mikrotik-routeros/actions/runs/35579006957). [Publication 35579514765](https://github.com/im-ecorp/mikrotik-routeros/actions/runs/35579514765) built both platforms and published to Docker Hub but failed the GHCR package write. Recovery re-queries successful exact-source main CI and named jobs; historical links alone do not bypass the gate.
+
+Preflight checks all targets before the first copy:
+
+- The existing source index must match the desired digest. Both amd64 and arm64 config blobs must verify by digest and contain internal wrapper `1.0.0`, CHR seed `7.21.4`, source revision above, and this repository's source URL. Config architecture/OS must agree with the index.
+- Both `7.21.4` and `v7.21.4` in **each** registry must equal the known old or desired digest. Missing aliases or unrelated digests stop recovery.
+- GHCR `sha-f6108c7672800618fd78e407ef79fcd15f69eef8` must be absent (`404 MANIFEST_UNKNOWN`) or already equal the desired digest.
+- Docker Hub's existing suffix and source-SHA tags must equal the desired digest and remain untouched. Both `latest` tags must equal the preserved digest before and after recovery.
+
+Only five references are eligible for writes: the two CHR aliases in each registry and the immutable GHCR source-SHA tag. Each copy reads the **existing digest**, never a mutable source tag:
+
+```text
+skopeo copy --all --preserve-digests --authfile <private-file> \
+  docker://hossein3piol/mikrotik-routeros@sha256:9dc63b8d19af9bb3e343fd946c487189cdf912fc822f3f829455b616b91d8425 \
+  docker://<approved-repository>:<approved-tag>
+```
+
+The script logs in using password stdin, captures subprocess output rather than logging credentials, and cleans its mode-0600 auth file in a private temporary directory on exit. The workflow uses an ephemeral hosted runner; no auth files or guest disks enter artifacts. No suffix GHCR tag, `latest`, deletion, rebuild, or production operation is allowed.
+
+Targets already at the desired digest are read back without rewriting. Other targets are rechecked immediately before copying. Every destination is checked after its copy and again at the end; preserved references are checked again. This permits safe idempotent completion after a partial failure **within the hardcoded scope**.
+
+After review and successful main CI for the workflow change, dispatch:
+
+```sh
+gh workflow run recover-chr-image.yml --repo im-ecorp/mikrotik-routeros --ref main \
+  -f approve_version_overwrite=true
+```
+
+Inspect `recovery-manifest.json` and require `status: success`, all five destination digests, both unchanged `latest` digests, and preserved Docker Hub references. On failure the artifact records completed observations and `status: failed`, not a success claim. An unrelated target digest requires investigation, not relaxed checks or blind reruns.
+
+## Concurrency and evidence
+
+Both workflows share the non-cancelling `chr-image-publication` concurrency group. This serializes these workflows, **not external writers**. Registry preflight is not compare-and-swap or registry-enforced immutability; restrict other writers. Cross-registry publication is not atomic. Do not delete or rebuild successful partial results merely to retry. The bounded recovery covers only the exact image above; another source/digest needs separately reviewed recovery authorization.
+
+`release-manifest.json` records internal wrapper and CHR versions, source SHA/URL, run URL, verified references/digests/platforms, and `latest` preservation evidence. Recovery records the original source SHA separately from the workflow executor SHA, CI run evidence, before/after observations, and completion status. Artifacts and job summaries retain these records for 90 days; download and retain durable release evidence. The workflows cannot create Git tags or GitHub Releases (`contents` is read-only). Public release notes should identify **CHR 7.21.4**, not advertise wrapper `1.0.0` as the RouterOS version, and disclose that arm64 is build-only.
+
+## Platform and reproducibility boundaries
+
+The Dockerfile pins the multi-platform Alpine index:
 
 ```text
 alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 ```
 
-The digest was retrieved from Docker Hub's registry API and independently matched to SHA-256 of the response bytes. The [official Alpine release table](https://alpinelinux.org/releases/) lists v3.24 as supported in both main and community, with branch end-of-support 2028-06-01. Community support generally lasts until the next stable release, **not necessarily that end-of-support date**; QEMU comes from community. Recheck support and rebuild under a new wrapper release when Alpine's support level changes.
+The digest was matched to registry response bytes. The [official Alpine release table](https://alpinelinux.org/releases/) lists v3.24 main/community support, with branch end-of-support 2028-06-01. Community support generally lasts until the next stable release, **not necessarily that date**; QEMU comes from community. Recheck support before future builds.
 
-The initial publication matrix is deliberately conservative:
-
-| Container platform | Release qualification |
+| Container platform | Qualification |
 | --- | --- |
-| `linux/amd64` | Required real Docker/CHR runtime integration on a GitHub-hosted runner, exact main source SHA |
-| `linux/arm64` | Cross-built with `docker/setup-qemu-action`; build-only, no claimed CHR runtime validation |
+| `linux/amd64` | Required real Docker/CHR runtime integration on the exact main source SHA |
+| `linux/arm64` | Cross-built only; no claimed CHR runtime validation |
 
-Both run the x86-64 CHR guest with `qemu-system-x86_64`; arm64 here describes the container host, not a native ARM RouterOS guest. The v3.24 main/community APK indexes for `x86_64` and `aarch64` were checked: every explicit Dockerfile package is present, including `qemu-system-x86_64` 11.0.3-r0. Index availability is not a substitute for a successful image build: the release run must complete both platform builds and read back the manifest before success is claimed.
-
-The former publisher advertised `linux/arm/v6`, `linux/arm/v7`, and `linux/386` without this release's build/runtime evidence. They are excluded from **new wrapper releases**, not deleted from old images. The generic Dockerfile and existing published compatibility images remain available. Reintroduce a platform only after verifying its package dependencies, actual build, and documenting whether runtime was tested.
-
-## Release gates and dispatch
-
-Only `workflow_dispatch` on `refs/heads/main` in `im-ecorp/mikrotik-routeros` can publish. There is no arbitrary source-ref input. The source is the dispatch event's immutable `github.sha`, used explicitly by both checkouts and OCI labels.
-
-Before any registry push:
-
-1. Validate canonical `X.Y.Z` wrapper and seed inputs using environment variables, never shell interpolation. The seed must equal the Dockerfile default tested on that SHA; a different seed requires a source change and fresh CI, not a dispatch override.
-2. Query GitHub Actions for the latest **main push** runs of `.github/workflows/validate.yml` and `.github/workflows/runtime-integration.yml` on that exact SHA. Both must have completed successfully, and their latest-attempt jobs named `validate` and `integration` must explicitly succeed rather than skip. PR-merge SHA checks, older source commits, manual integration runs, skipped/failed workflows, and still-running checks do not qualify.
-3. Run the unit suite, required Compose rendering, and shell syntax validation again in the publisher's `validate` job. `publish` explicitly depends on this job.
-4. Refuse an existing wrapper Git tag `v<release_version>`, then check both new image tags in both registries. Only an authenticated registry `404 MANIFEST_UNKNOWN` is accepted as absence. Authentication errors, rate limits, malformed responses, other errors, and existing tags stop publication.
-5. Build amd64 and arm64 with provenance and SBOM enabled, push only the four explicit references, then read every reference back. Its digest must match BuildKit's output and its platform list must be exactly amd64 plus arm64 (attestation descriptors excluded).
-
-The workflow has one non-cancelling concurrency group to serialize its own publishers. This is a **fail-on-reuse policy**, not registry-enforced immutability: an unrelated writer can race a preflight. Restrict other writers and enable registry tag immutability where available. Cross-registry publishing is not atomic. If a push partly succeeds, do not overwrite or delete the successful tags or blindly rerun: investigate the recorded digests and finish recovery deliberately. The SHA tag deliberately prevents publishing different wrapper metadata from the same source commit.
-
-Wait for both main push workflows to finish, then dispatch:
-
-```sh
-gh workflow run docker-image.yml --repo im-ecorp/mikrotik-routeros --ref main \
-  -f release_version=1.0.0 -f routeros_version=7.21.4
-```
-
-Required secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. GHCR uses the job-scoped `GITHUB_TOKEN` with `packages: write`; the legacy `CR_PAT` is not consumed. The existing GHCR package must grant this repository Actions write access; if not, correct package access rather than weakening the token policy. The validation job gets only `contents: read` and `actions: read`; publishing gets `contents: read` and `packages: write`. Checkouts do not retain credentials.
-
-## Published release record
-
-The workflow records the full source SHA, wrapper and seed versions, all image references and verified digests, actual platform list, qualification boundary, and run URL in `release-manifest.json`. It uploads that file as the `release-manifest` artifact (90-day retention) and writes it to the job summary. The Docker build action also publishes its build record; OCI source/revision/version labels plus provenance and SBOM remain associated with the images.
-
-The image workflow intentionally cannot create Git tags or GitHub Releases (`contents` is read-only). After a successful run, a maintainer must attach the manifest to a durable GitHub Release at the **same source SHA**. Do not create `v1.0.0` before the image run: preflight rejects reused Git tags. Example, replacing the placeholders with the successful run ID and its recorded full SHA:
-
-```sh
-gh run download <run-id> --repo im-ecorp/mikrotik-routeros \
-  --name release-manifest --dir release-evidence
-gh release create v1.0.0 --repo im-ecorp/mikrotik-routeros \
-  --target <full-source-sha> --title 'Wrapper v1.0.0 (RouterOS seed 7.21.4)' \
-  --notes-file <reviewed-release-notes.md> release-evidence/release-manifest.json
-```
-
-Release notes should link the exact main Validate and Runtime integration runs and the image publication run, and identify arm64 as build-only. Verify the release tag target and attached manifest after creation. A checked-in workflow, package-index lookup, or passing policy tests alone is **not** a published release or runtime proof.
-
-## Reproducibility boundary
-
-The Alpine base index and source commit are pinned. APK repositories and MikroTik's HTTPS seed URL remain external inputs and may change; this is traceable publication, not a claim of bit-for-bit reproducibility or independently authenticated vendor seed checksums. The runtime gate tests the source's amd64 integration build; the final multi-platform release build differs in wrapper labels and can consume newer APK packages. Preserve CI/build records, review provenance/SBOM, and pin deployments by the verified final digest. Native arm64 runtime, KVM acceleration, production network environments, and every legacy platform are outside the initial release qualification.
+Both run the x86-64 CHR guest. Legacy `arm/v6`, `arm/v7`, and `386` images are not deleted but are excluded from new builds. The Alpine base and source are pinned, while APK repositories and MikroTik's seed URL remain external mutable inputs. Normal publication is traceable, not bit-for-bit reproducible; its final build can consume packages newer than CI. Recovery avoids that change by preserving the already-built exact digest and all platform manifests/attestations. Native arm64 runtime, KVM, production networks, and legacy-platform runtime remain outside qualification.

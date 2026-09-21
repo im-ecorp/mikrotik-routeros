@@ -1,7 +1,7 @@
 services:
   routers:
     container_name: "mikrotik"
-    image: hossein3piol/mikrotik-routeros:${ROUTEROS_VERSION:-7.21.4-r1.0.0}
+    image: hossein3piol/mikrotik-routeros:${ROUTEROS_VERSION:-7.21.4}
     privileged: true
     restart: unless-stopped
     environment:
