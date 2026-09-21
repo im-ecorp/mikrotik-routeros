@@ -1,0 +1,213 @@
+name: Publish current website CHR matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      approve_version_overwrite:
+        description: 'Approve replacing the 17 reviewed version/vversion aliases and latest with qualified 7.24.4'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: chr-image-publication
+  cancel-in-progress: false
+
+env:
+  APPROVE_VERSION_OVERWRITE: ${{ inputs.approve_version_overwrite }}
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main' && github.repository == 'im-ecorp/mikrotik-routeros'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: docker/setup-compose-action@v1
+        with:
+          version: v5.5.1
+      - name: Validate source and required Compose
+        env:
+          REQUIRE_COMPOSE: '1'
+        run: |
+          docker compose --env-file .env.example -f docker-compose.yml config --quiet
+          for script in bin/*.sh bin/qemu-ifup bin/qemu-ifdown; do bash -n "$script"; done
+          python3 -m unittest discover -s tests -q
+      - name: Reuse original snapshot on reruns, never rebaseline drift
+        if: github.run_attempt != 1
+        uses: actions/download-artifact@v4
+        with:
+          name: chr-matrix-snapshot
+          path: matrix-snapshot
+      - name: Snapshot reviewed destinations and old latest
+        id: prepare
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/chr_matrix.py prepare
+      - name: Keep the original snapshot immutable within this run
+        if: always() && github.run_attempt == 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: chr-matrix-snapshot
+          path: matrix-snapshot/snapshot.json
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Ensure sanitized failure evidence exists
+        if: always()
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          p = Path('matrix-output/report.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          if not p.exists():
+              p.write_text(json.dumps({'status': 'failed', 'stage': 'prepare-prerequisites'}))
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chr-matrix-prepare-${{ github.run_attempt }}
+          path: matrix-output/report.json
+          retention-days: 90
+          if-no-files-found: error
+
+  variant:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      CHR_VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: chr-matrix-snapshot
+          path: matrix-snapshot
+      - name: Disposable Docker prerequisites
+        run: |
+          docker version
+          docker compose version
+          test -c /dev/net/tun
+          sudo apt-get update -qq
+          sudo apt-get install -y skopeo
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build immutable multiarch source, test exact amd64 digest, then promote version aliases
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/chr_matrix.py variant
+      - name: Ensure sanitized failure evidence exists
+        if: always()
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          p = Path('matrix-output/report.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          if not p.exists():
+              p.write_text(json.dumps({'status': 'failed', 'version': os.environ['CHR_VERSION'],
+                                       'stage': 'variant-prerequisites'}))
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chr-matrix-version-${{ matrix.version }}
+          path: matrix-output/report.json
+          overwrite: true
+          retention-days: 90
+          if-no-files-found: error
+
+  aggregate:
+    needs: [prepare, variant]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: chr-matrix-snapshot
+          path: matrix-snapshot
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chr-matrix-version-*
+          path: matrix-reports
+          merge-multiple: false
+      - name: Install digest-preserving registry copier
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y skopeo
+      - name: Require all 17 full qualifications, read back both registries, then promote latest 7.24.4
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/chr_matrix.py aggregate
+      - name: Ensure sanitized failure evidence exists
+        if: always()
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          p = Path('matrix-output/report.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          if not p.exists():
+              p.write_text(json.dumps({'status': 'failed', 'stage': 'aggregate-prerequisites'}))
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chr-matrix-aggregate-${{ github.run_attempt }}
+          path: matrix-output/report.json
+          retention-days: 90
+          if-no-files-found: error

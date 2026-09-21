@@ -89,7 +89,7 @@ If `.env` is omitted, the `7.21.4` tag and `Asia/Tehran` timezone are used by de
 Public image tags are CHR seed versions: `7.21.4` and `v7.21.4`.
 Before using these aliases, confirm the successful [recovery manifest](docs/releases.md#bounded-exact-digest-recovery)
 shows the runtime-capable image in both registries. The previous alias digest does
-not contain `/routeros/bin/runtime.py`; `latest` remains untouched and is not the
+not contain `/routeros/bin/runtime.py`; this recovery leaves `latest` untouched; it is not the
 Compose default. Pin the verified digest for an immutable deployment.
 `MANAGEMENT_BIND_IP` defaults to `0.0.0.0` (all host IPv4 addresses) when unset or
 empty. The checked-in `.env.example` preserves that compatibility default; change
@@ -271,11 +271,20 @@ ghcr.io/im-ecorp/mikrotik-routeros:7.21.4
 ```
 
 Existing CHR aliases require the explicit `approve_version_overwrite=true`
-boolean dispatch input. SHA tags are never overwritten. No workflow writes
-`latest` or creates new `-r` suffix tags. Internal wrapper metadata remains in
+boolean dispatch input. SHA tags are never overwritten. The default-seed publisher
+does not write `latest`; no workflow creates new `-r` suffix tags. Internal wrapper metadata remains in
 OCI labels, separate from the CHR seed version. Docker Hub uses
 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`; GHCR uses the scoped `GITHUB_TOKEN`.
 See [release gates, platform qualifications, and exact-digest recovery](docs/releases.md).
+
+The separate manual `current-chr-matrix.yml` workflow covers the **17 reviewed
+website CHR versions** in `config/chr-versions.json`, including `7.24` and
+`7.25beta5`. Each checksum-verified seed is built for amd64/arm64; the exact final
+amd64 digest must pass full Docker/CHR integration before version aliases move.
+Only after all 17 pass and both registries read back correctly may it promote
+`latest` to **7.24.4**, with explicit overwrite approval. ARM64 is build-only;
+the Dockerfile/Compose default remains `7.21.4`. Workflow availability is not
+proof of publication: require its successful aggregate report before deployment.
 
 ---
 

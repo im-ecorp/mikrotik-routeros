@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "latest": "7.24.4",
+  "source": "https://mikrotik.com/download",
+  "discovery_sha256": {
+    "main-artifacts.json": "188a1babd3d09e3f4304f8abe1483db0e6dbc493f9e180377436f8aae173e311",
+    "main-channel-lists.json": "cf134c40bf5ca36230765c509286ed1a943ca6abda4e733ecbde08896d54fa45"
+  },
+  "versions": [
+    {
+      "version": "6.49.17",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/6.49.17/chr-6.49.17.vdi.zip",
+      "checksumSHA256": "48c2aac1facfa12c21633ca8296f23ca86013ca531c0a88b8d97bc5ba8500d95",
+      "channels": [
+        "stable"
+      ]
+    },
+    {
+      "version": "6.49.18",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/6.49.18/chr-6.49.18.vdi.zip",
+      "checksumSHA256": "1f37ddc98359f7b21a807eee766183e41e6bf49cde771a46ab697bdcaf311808",
+      "channels": [
+        "longTerm",
+        "stable"
+      ]
+    },
+    {
+      "version": "6.49.19",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/6.49.19/chr-6.49.19.vdi.zip",
+      "checksumSHA256": "e72773516a06687e1060e11d79239b4636b15c24f5aea5b0ce438add01a96d91",
+      "channels": [
+        "longTerm",
+        "stable"
+      ]
+    },
+    {
+      "version": "6.49.20",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/6.49.20/chr-6.49.20.vdi.zip",
+      "checksumSHA256": "8ec1cb84050a38d03da8cad354b31006483427498e31319c3652515961d83c4c",
+      "channels": [
+        "longTerm",
+        "stable"
+      ]
+    },
+    {
+      "version": "6.49.21",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/6.49.21/chr-6.49.21.vdi.zip",
+      "checksumSHA256": "a5302c09c061af15158b16ed1d6c08a08903bbceb0194da82dd282bad64bc788",
+      "channels": [
+        "longTerm",
+        "stable"
+      ]
+    },
+    {
+      "version": "6.49.22",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/6.49.22/chr-6.49.22.vdi.zip",
+      "checksumSHA256": "178f6e74dff46027300a0bce44380fbefe8399af91fa1f857c97f81ae30d4734",
+      "channels": [
+        "longTerm"
+      ]
+    },
+    {
+      "version": "7.21.5",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.21.5/chr-7.21.5.vdi.zip",
+      "checksumSHA256": "562761f902da79a344bf3c3fa4e3d990b698054a58124d906882a36ab99479d5",
+      "channels": [
+        "longTerm"
+      ]
+    },
+    {
+      "version": "7.23.4",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.23.4/chr-7.23.4.vdi.zip",
+      "checksumSHA256": "8ec2c419d14bf73e0b6bfa6340e31b04242f8e307321a8723a341dc8d2403fb8",
+      "channels": [
+        "longTerm"
+      ]
+    },
+    {
+      "version": "7.23.5",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.23.5/chr-7.23.5.vdi.zip",
+      "checksumSHA256": "399d6f91f1d8cb964d9bcad89f86eaa6921e45fa79e1a80e282857718fd01749",
+      "channels": [
+        "longTerm"
+      ]
+    },
+    {
+      "version": "7.23.6",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.23.6/chr-7.23.6.vdi.zip",
+      "checksumSHA256": "babdc32f4c8cfaf2d03082068f2f1e456b795077c4479867fa2f976343a629d0",
+      "channels": [
+        "longTerm"
+      ]
+    },
+    {
+      "version": "7.23.7",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.23.7/chr-7.23.7.vdi.zip",
+      "checksumSHA256": "2862f74fd15f9f417c1fb165ca3f6f6a91f36d47e5b614ffc4102fec2d1f6afc",
+      "channels": [
+        "longTerm"
+      ]
+    },
+    {
+      "version": "7.24",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.24/chr-7.24.vdi.zip",
+      "checksumSHA256": "5115bd6cd3f382f82952e744d89b702dd81cd3adc0fdcb0844c7412861a77625",
+      "channels": [
+        "stable"
+      ]
+    },
+    {
+      "version": "7.24.1",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.24.1/chr-7.24.1.vdi.zip",
+      "checksumSHA256": "d7e1e68ab79b65974b6ae82b15e013ce6f94112b019a7842c0e8465a6d11d792",
+      "channels": [
+        "stable"
+      ]
+    },
+    {
+      "version": "7.24.2",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.24.2/chr-7.24.2.vdi.zip",
+      "checksumSHA256": "e07dcc3f29f1c66f5eb590b27579d452e61a8a66039166aa66bed953cb536ade",
+      "channels": [
+        "stable"
+      ]
+    },
+    {
+      "version": "7.24.3",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.24.3/chr-7.24.3.vdi.zip",
+      "checksumSHA256": "51021fc8f946fb780225c005392216cc5e659db84c9e803eb514e242fc42bf3c",
+      "channels": [
+        "stable"
+      ]
+    },
+    {
+      "version": "7.24.4",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.24.4/chr-7.24.4.vdi.zip",
+      "checksumSHA256": "2b806f38bb5ddb9a26b0a0aeb690187a3a0a19674b17bc54704e6adafa8ec874",
+      "channels": [
+        "stable"
+      ]
+    },
+    {
+      "version": "7.25beta5",
+      "architecture": "x86",
+      "url": "https://download.mikrotik.com/routeros/7.25beta5/chr-7.25beta5.vdi.zip",
+      "checksumSHA256": "a16df9f75f492ecd50441b8d8cb91c74cb433bc4d5045c4ca633668ea9e9179c",
+      "channels": [
+        "development"
+      ]
+    }
+  ]
+}
