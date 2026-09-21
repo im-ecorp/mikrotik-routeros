@@ -83,7 +83,7 @@ jobs:
           if __name__ == '__main__':
               require_ci(os.environ['SOURCE_SHA'])
           # END GATE POLICY
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - uses: docker/setup-compose-action@v1
