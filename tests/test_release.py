@@ -118,12 +118,12 @@ class ReleaseTests(unittest.TestCase):
             script = Path(directory) / "step.py"
             script.write_text(code)
             output = Path(directory) / "outputs"
-            env = dict(os.environ, RELEASE_VERSION="1.0.0", ROUTEROS_VERSION="7.21.4",
+            env = dict(os.environ, RELEASE_VERSION="1.0.0", ROUTEROS_VERSION="7.21.5",
                        SOURCE_REF="refs/heads/main", SOURCE_SHA="a" * 40, GITHUB_OUTPUT=str(output))
             env.pop("PYTHONPATH", None)
             result = subprocess.run([sys.executable, str(script)], cwd=ROOT, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("image_tag=7.21.4", output.read_text())
+            self.assertIn("image_tag=7.21.5", output.read_text())
 
     def test_supported_base_and_traceability_labels(self):
         dockerfile = (ROOT / "Dockerfile").read_text()

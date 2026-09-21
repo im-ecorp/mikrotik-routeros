@@ -31,7 +31,7 @@ class SeedChecksumTests(unittest.TestCase):
         self.assertIn('ARG ROUTEROS_SHA256=', text)
         self.assertLess(text.index('sha256sum -c'), text.index('unzip /routeros/image.zip'))
         self.assertIn('io.mikrotik-routeros.seed.sha256=$ROUTEROS_SHA256', text)
-        self.assertIn('ARG ROUTEROS_VERSION=7.21.4\n', text)
+        self.assertIn('ARG ROUTEROS_VERSION=7.21.5\n', text)
 
 
 class MatrixPolicyTests(unittest.TestCase):

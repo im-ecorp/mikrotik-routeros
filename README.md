@@ -86,6 +86,12 @@ MANAGEMENT_BIND_IP=127.0.0.1
 ```
 
 If `.env` is omitted, the `7.21.4` tag and `Asia/Tehran` timezone are used by default.
+
+> **Seed vs. pulled tag.** `ROUTEROS_VERSION` here selects an image tag that must
+> already exist in the registry. The Dockerfile's `ARG ROUTEROS_VERSION` selects
+> the CHR seed the *next* build will bake in, and is currently **7.21.5** (the
+> current longTerm release; MikroTik no longer offers 7.21.4). Compose moves to
+> `7.21.5` only after that seed is built, qualified and published.
 Public image tags are CHR seed versions: `7.21.4` and `v7.21.4`.
 Before using these aliases, confirm the successful [recovery manifest](docs/releases.md#bounded-exact-digest-recovery)
 shows the runtime-capable image in both registries. The previous alias digest does

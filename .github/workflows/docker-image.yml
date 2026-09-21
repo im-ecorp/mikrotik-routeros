@@ -17,7 +17,7 @@ on:
         description: 'RouterOS seed version; must match the tested Dockerfile default'
         required: true
         type: string
-        default: '7.21.4'
+        default: '7.21.5'
 
 permissions:
   contents: read
