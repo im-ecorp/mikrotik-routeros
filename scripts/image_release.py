@@ -34,13 +34,47 @@ def fetch(url, headers):
         return error.code, error.read(), error.headers
 
 
+class RegistryError(ValueError):
+    """Only fixed codes and bounded scalars may leave the registry transport."""
+    def __init__(self, operation, reason, image=None, status=None, attempt=1):
+        super().__init__('Registry operation failed closed')
+        self.diagnostic = {
+            'operation': operation if operation in ('token', 'manifest', 'config') else 'unknown',
+            'reason': reason if reason in ('unauthorized', 'forbidden', 'rate_limited', 'http_error',
+                'credentials_missing', 'invalid_json', 'token_missing', 'transport_error',
+                'timeout', 'digest_mismatch', 'invalid_manifest', 'invalid_config',
+                'invalid_reference', 'unapproved_repository') else 'unclassified_failure',
+            'status': status if type(status) is int and 100 <= status <= 599 else None,
+            'registry': 'docker.io' if image == HUB else 'ghcr.io' if image == GHCR else 'unknown',
+            'attempt': attempt if type(attempt) is int and attempt in (1, 2) else 1,
+        }
+
+
+def http_reason(status):
+    return {401: 'unauthorized', 403: 'forbidden', 429: 'rate_limited'}.get(status, 'http_error')
+
+
 class Registry:
     def __init__(self, credentials=None, *, fetch=fetch):
         self.credentials = credentials if credentials is not None else os.environ
         self.fetch = fetch
         self.tokens = {}
+        self.attempt = 1
+
+    def error(self, operation, reason, image, status=None):
+        return RegistryError(operation, reason, image, status, self.attempt)
+
+    def read(self, url, headers, operation, image):
+        try:
+            return self.fetch(url, headers)
+        except TimeoutError:
+            raise self.error(operation, 'timeout', image) from None
+        except (OSError, ValueError):
+            # Includes URLError and redirect refusal; never stringify exceptions.
+            raise self.error(operation, 'transport_error', image) from None
 
     def request(self, image, path):
+        operation = 'config' if path.startswith('blobs/') else 'manifest'
         if image == HUB:
             host, endpoint, service, repository, prefix = (
                 'registry-1.docker.io', 'https://auth.docker.io/token', 'registry.docker.io', HUB, 'HUB')
@@ -48,42 +82,59 @@ class Registry:
             host, endpoint, service, repository, prefix = (
                 'ghcr.io', 'https://ghcr.io/token', 'ghcr.io', GHCR.removeprefix('ghcr.io/'), 'GH')
         else:
-            raise ValueError('Unapproved registry repository')
+            raise self.error(operation, 'unapproved_repository', image)
         if image not in self.tokens:
-            user, secret = self.credentials[prefix + '_USER'], self.credentials[prefix + '_TOKEN']
+            user, secret = self.credentials.get(prefix + '_USER'), self.credentials.get(prefix + '_TOKEN')
             if not user or not secret:
-                raise ValueError('Registry credentials are missing')
+                raise self.error('token', 'credentials_missing', image)
             basic = base64.b64encode(f'{user}:{secret}'.encode()).decode()
             query = urllib.parse.urlencode({'service': service, 'scope': f'repository:{repository}:pull'})
-            status, body, _ = self.fetch(endpoint + '?' + query, {'Authorization': 'Basic ' + basic})
+            status, body, _ = self.read(endpoint + '?' + query, {'Authorization': 'Basic ' + basic}, 'token', image)
             if status != 200:
-                raise ValueError(f'Registry authentication failed (HTTP {status})')
-            data = json.loads(body)
-            token = data.get('token') or data.get('access_token')
+                raise self.error('token', http_reason(status), image, status)
+            try:
+                data = json.loads(body)
+            except ValueError:
+                raise self.error('token', 'invalid_json', image, status) from None
+            token = (data.get('token') or data.get('access_token')) if isinstance(data, dict) else None
             if not isinstance(token, str) or not token:
-                raise ValueError('Registry token missing')
+                raise self.error('token', 'token_missing', image, status)
             self.tokens[image] = token
-        return self.fetch(f'https://{host}/v2/{repository}/{path}', {
+        return self.read(f'https://{host}/v2/{repository}/{path}', {
             'Authorization': 'Bearer ' + self.tokens[image],
-            'Accept': 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'})
+            'Accept': 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'}, operation, image)
 
     def manifest(self, image, tag):
         if not re.fullmatch(r'(?:sha256:[0-9a-f]{64}|[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})', tag):
-            raise ValueError('Invalid manifest reference')
+            raise self.error('manifest', 'invalid_reference', image)
         status, raw, headers = self.request(image, 'manifests/' + tag)
-        return decode_manifest(status, raw, headers.get('Docker-Content-Digest'))
+        try:
+            return decode_manifest(status, raw, headers.get('Docker-Content-Digest'))
+        except ValueError as error:
+            reason = (http_reason(status) if status != 200 else
+                      'digest_mismatch' if headers.get('Docker-Content-Digest') != 'sha256:' + hashlib.sha256(raw).hexdigest() else
+                      'invalid_json' if isinstance(error, (json.JSONDecodeError, UnicodeError)) else 'invalid_manifest')
+            raise self.error('manifest', reason, image, status) from None
 
     def config(self, image, digest):
         actual, manifest = self.manifest(image, digest)
         if actual != digest:
-            raise ValueError('Child manifest digest mismatch')
-        config_digest = manifest['config']['digest']
-        if not re.fullmatch(r'sha256:[0-9a-f]{64}', config_digest):
-            raise ValueError('Invalid config digest')
+            raise self.error('config', 'digest_mismatch', image)
+        try:
+            config_digest = manifest['config']['digest']
+            if not re.fullmatch(r'sha256:[0-9a-f]{64}', config_digest):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise self.error('config', 'invalid_config', image) from None
         status, raw, _ = self.request(image, 'blobs/' + config_digest)
-        if status != 200 or 'sha256:' + hashlib.sha256(raw).hexdigest() != config_digest:
-            raise ValueError('Config blob digest mismatch')
-        return json.loads(raw)
+        if status != 200:
+            raise self.error('config', http_reason(status), image, status)
+        if 'sha256:' + hashlib.sha256(raw).hexdigest() != config_digest:
+            raise self.error('config', 'digest_mismatch', image, status)
+        try:
+            return json.loads(raw)
+        except ValueError:
+            raise self.error('config', 'invalid_json', image, status) from None
 
 
 class Skopeo:

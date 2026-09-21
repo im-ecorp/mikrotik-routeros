@@ -1,0 +1,63 @@
+name: Read-only original CHR matrix diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+concurrency:
+  group: chr-image-publication
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main' && github.repository == 'im-ecorp/mikrotik-routeros'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Load exact original snapshot, never create a new baseline
+        uses: actions/download-artifact@v4
+        with:
+          repository: im-ecorp/mikrotik-routeros
+          run-id: 35607084875
+          github-token: ${{ github.token }}
+          name: chr-matrix-snapshot
+          path: matrix-snapshot
+      - name: Validate original snapshot and read preserved references
+        env:
+          ORIGINAL_RUN_ID: '35607084875'
+          ORIGINAL_SOURCE_SHA: 858d85fd17ff720df88a65b44ec65ecf198dd8dd
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 scripts/chr_diagnostics.py
+      - name: Ensure bounded prerequisite evidence exists
+        if: always()
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          p = Path('diagnostic-output/report.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          if not p.exists():
+              p.write_text(json.dumps({'status': 'failed', 'mode': 'read_only',
+                  'failure': {'stage': 'diagnostic_prerequisites', 'reason': 'step_incomplete'}}))
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chr-matrix-diagnostic-${{ github.run_attempt }}
+          path: diagnostic-output/report.json
+          retention-days: 90
+          if-no-files-found: error

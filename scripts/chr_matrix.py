@@ -5,9 +5,9 @@ from pathlib import Path
 import re
 
 try:
-    from scripts.image_release import HUB, GHCR, REPOSITORY, Registry, Skopeo, platforms
+    from scripts.image_release import HUB, GHCR, REPOSITORY, Registry, RegistryError, Skopeo, platforms
 except ModuleNotFoundError:  # Direct CLI invocation.
-    from image_release import HUB, GHCR, REPOSITORY, Registry, Skopeo, platforms
+    from image_release import HUB, GHCR, REPOSITORY, Registry, RegistryError, Skopeo, platforms
 
 PLATFORMS = ['linux/amd64', 'linux/arm64']
 PRESERVED_TAGS = ('7.21.4', 'v7.21.4', '7.21.4-r1.0.0',
@@ -27,10 +27,12 @@ class MatrixRegistry(Registry):
         return self.configs[key]
 
     def request(self, image, path):
+        self.attempt = 1
         result = super().request(image, path)
         if result[0] == 401:
             # Build plus full guest qualification can outlive a pull token.
             self.tokens.pop(image, None)
+            self.attempt = 2
             result = super().request(image, path)
         return result
 
@@ -174,7 +176,7 @@ def verify_image(registry, image, tag, digest, row, sha):
 
 def publish_version(registry, copy_image, build, runtime, row, sha, before, approve, harness_hash, report):
     version = row['version']; tag = source_tag(sha, version)
-    report.update(status='preflight', version=version, source_sha=sha,
+    report.update(status='preflight', stage='source_preflight', version=version, source_sha=sha,
                   platforms=PLATFORMS, runtime_tested=['linux/amd64'], build_only=['linux/arm64'],
                   before=before, images=[])
     # Existing sources are immutable: validate and reuse, never rebuild on reruns.
@@ -195,19 +197,24 @@ def publish_version(registry, copy_image, build, runtime, row, sha, before, appr
             verify_image(registry, HUB, tag, digest, row, sha)
     else:
         report['status'] = 'building'
+        report['stage'] = 'building'
         digest = build(row, tag)
     report['digest'] = digest
+    report['stage'] = 'source_readback'
     verify_image(registry, HUB, tag, digest, row, sha)
     report['status'] = 'runtime'
+    report['stage'] = 'runtime'
     result = runtime(HUB + '@' + digest)
     require_runtime(result, row, sha, HUB + '@' + digest, harness_hash)
     report['runtime'] = result
     targets = [(image, alias) for image in (HUB, GHCR) for alias in (tag, version, 'v' + version)]
+    report['stage'] = 'alias_preflight'
     # All aliases preflight before any alias write. No unknown drift accepted.
     for image, alias in targets:
         current = registry.manifest(image, alias)[0]
         require_target(current, before[f'{image}:{alias}'], digest, approve if alias != tag else False)
     report['status'] = 'promoting'
+    report['stage'] = 'promoting'
     for image, alias in targets:
         current = registry.manifest(image, alias)[0]
         require_target(current, before[f'{image}:{alias}'], digest, approve if alias != tag else False)
@@ -215,14 +222,18 @@ def publish_version(registry, copy_image, build, runtime, row, sha, before, appr
             copy_image(HUB, digest, image, alias)
         report['images'].append(verify_image(registry, image, alias, digest, row, sha))
     # Re-read earlier writes too; copies across registries cannot be atomic.
+    report['stage'] = 'final_readback'
     report['images'] = [verify_image(registry, image, alias, digest, row, sha) for image, alias in targets]
     report['status'] = 'success'
     return report
 
 
-def check_preserved(registry, snapshot):
-    for ref, expected in snapshot['preserved'].items():
+def check_preserved(registry, snapshot, report=None):
+    for index, (ref, expected) in enumerate(snapshot['preserved'].items(), 1):
         image, tag = ref.rsplit(':', 1)
+        if report is not None:
+            # Snapshot is validated first; expose a bounded ordinal, not a raw reference.
+            report['stage_details'] = {'reference_index': min(index, 8), 'reference_count': 8}
         if registry.manifest(image, tag)[0] != expected:
             raise ValueError('Out-of-scope reference changed')
 
@@ -279,10 +290,30 @@ import tempfile
 
 
 class CommandFailure(RuntimeError):
-    def __init__(self, stage, exit_code, *, timed_out=False):
+    def __init__(self, stage, exit_code, *, timed_out=False, output_reason=None):
         super().__init__('Bounded subprocess failed')
         self.failure = {'stage': stage, 'reason': 'timeout' if timed_out else 'nonzero_exit',
                         'exit_code': exit_code, 'timed_out': timed_out}
+        if output_reason in {reason for _, reason in OUTPUT_CODES}:
+            self.failure['output_reason'] = output_reason
+
+
+# Presence of fixed markers is a diagnostic hint, never a qualification decision.
+OUTPUT_CODES = (
+    (b'permission_denied: write_package', 'registry_permission_denied'),
+    (b'toomanyrequests', 'registry_rate_limited'),
+    (b'no space left on device', 'storage_full'),
+    (b'checksum did not match', 'checksum_mismatch'),
+    (b'tls handshake timeout', 'transport_timeout'),
+)
+
+
+def classify_output(output):
+    # Read only the last 64 KiB of the private temporary output; emit no excerpts.
+    output.seek(0, 2)
+    output.seek(max(0, output.tell() - 65536))
+    data = output.read(65536).lower()
+    return next((reason for marker, reason in OUTPUT_CODES if marker in data), None)
 
 
 def run_command(command, timeout, *, stage):
@@ -295,8 +326,9 @@ def run_command(command, timeout, *, stage):
         except subprocess.TimeoutExpired:
             # TimeoutExpired embeds argv and may carry output; neither is evidence.
             raise CommandFailure(stage, None, timed_out=True) from None
-    if result.returncode:
-        raise CommandFailure(stage, result.returncode)
+        if result.returncode:
+            reason = classify_output(output) if stage in ('build', 'copy') else None
+            raise CommandFailure(stage, result.returncode, output_reason=reason)
 
 
 class MatrixCopy(Skopeo):
@@ -347,6 +379,41 @@ def require_snapshot(snapshot, data, sha, run_id, approve):
             raise ValueError('Invalid baseline digest')
 
 
+POLICY_FAILURES = {
+    'Snapshot must be the original dispatch scope and approval': 'snapshot_identity_mismatch',
+    'Snapshot target set is incomplete': 'snapshot_targets_mismatch',
+    'Snapshot preservation scope is incomplete': 'snapshot_preservation_mismatch',
+    'Missing old latest baseline': 'latest_baseline_missing',
+    'Invalid baseline digest': 'baseline_digest_invalid',
+    'Out-of-scope reference changed': 'preserved_reference_changed',
+    'Source or destination digest mismatch': 'image_digest_mismatch',
+    'Target drifted from the original dispatch snapshot': 'target_drift',
+    'Existing alias requires explicit overwrite approval': 'overwrite_not_approved',
+}
+
+
+def failure_details(error, stage):
+    stages = {'dispatch_validation', 'manifest_validation', 'version_validation', 'snapshot_read',
+              'snapshot_validation', 'snapshot_create', 'preservation_check', 'harness_identity',
+              'registry_login', 'publication', 'aggregation', 'matrix_output', 'source_preflight',
+              'building', 'source_readback', 'runtime', 'alias_preflight', 'promoting', 'final_readback'}
+    stage = stage if stage in stages else 'unknown'
+    if isinstance(error, RegistryError):
+        return {'stage': stage, **error.diagnostic}
+    if isinstance(error, CommandFailure):
+        return error.failure
+    if type(error) is ValueError and len(error.args) == 1 and isinstance(error.args[0], str):
+        reason = POLICY_FAILURES.get(error.args[0])
+        if reason:
+            return {'stage': stage, 'reason': reason}
+    reason = ('invalid_json' if isinstance(error, json.JSONDecodeError) else
+              'file_missing' if isinstance(error, FileNotFoundError) else
+              'missing_field' if isinstance(error, KeyError) else
+              'invalid_shape' if isinstance(error, TypeError) else
+              'policy_rejected' if isinstance(error, ValueError) else 'unclassified_failure')
+    return {'stage': stage, 'reason': reason}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('prepare', 'variant', 'aggregate'))
@@ -357,6 +424,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report = {'status': 'started', 'command': args.command}
+    stage = 'dispatch_validation'
     try:
         sha = os.environ.get('GITHUB_SHA', '')
         run_id = os.environ.get('GITHUB_RUN_ID', '')
@@ -368,32 +436,47 @@ def main(argv=None):
                 approval not in ('true', 'false')):
             raise ValueError('Only explicitly approved manual main dispatch is allowed')
         approve = approval == 'true'
+        stage = 'manifest_validation'
         data = load_manifest(args.manifest)
+        if args.command == 'variant':
+            stage = 'version_validation'
+            version = os.environ.get('CHR_VERSION', '')
+            row = next((r for r in data['versions'] if r['version'] == version), None)
+            if row is None:
+                raise ValueError('Version is outside reviewed scope')
+            report['version'] = row['version']
         registry = MatrixRegistry()
         report.update(source_sha=sha, run_id=run_id,
                       run_url=f'https://github.com/{REPOSITORY}/actions/runs/{run_id}')
         if args.command == 'prepare':
+            stage = 'snapshot_read'
             if os.environ.get('GITHUB_RUN_ATTEMPT') == '1':
                 if args.snapshot.exists():
                     raise ValueError('Never replace an existing dispatch snapshot')
+                stage = 'snapshot_create'
                 snapshot = create_snapshot(registry, data, sha, run_id, approve)
                 args.snapshot.parent.mkdir(parents=True, exist_ok=True)
                 args.snapshot.write_text(json.dumps(snapshot, indent=2) + '\n')
             else:
                 snapshot = json.loads(args.snapshot.read_text())
+            stage = 'snapshot_validation'
             require_snapshot(snapshot, data, sha, run_id, approve)
-            check_preserved(registry, snapshot)
+            stage = 'preservation_check'
+            check_preserved(registry, snapshot, report)
+            stage = 'matrix_output'
             with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
                 output.write('matrix=' + json.dumps({'include': [{'version': r['version']} for r in data['versions']]}) + '\n')
             report.update(status='success', count=len(data['versions']), snapshot=snapshot)
             return 0
+        stage = 'snapshot_read'
         snapshot = json.loads(args.snapshot.read_text())
+        stage = 'snapshot_validation'
         require_snapshot(snapshot, data, sha, run_id, approve)
-        check_preserved(registry, snapshot)
+        stage = 'preservation_check'
+        check_preserved(registry, snapshot, report)
+        stage = 'harness_identity'
         harness_hash = hashlib.sha256(Path('tests/docker-integration.py').read_bytes()).hexdigest()
         if args.command == 'variant':
-            version = os.environ['CHR_VERSION']
-            row = next(r for r in data['versions'] if r['version'] == version)
             tag = source_tag(sha, version)
             allowed = {(image, alias) for image in (HUB, GHCR) for alias in (version, 'v' + version, tag)}
             before = {f'{image}:{alias}': snapshot['before'][f'{image}:{alias}'] for image, alias in allowed}
@@ -436,12 +519,16 @@ def main(argv=None):
                             if raw.get('status') != 'passed':
                                 report['runtime']['failure'] = runtime_failure(raw)
                 return report['runtime']
+            stage = 'registry_login'
             with MatrixCopy(allowed) as copier:
+                stage = 'publication'
                 publish_version(registry, copier.copy_image, build, runtime, row, sha,
                                 before, approve, harness_hash, report)
-            check_preserved(registry, snapshot)
+            stage = 'preservation_check'
+            check_preserved(registry, snapshot, report)
             # Latest is untouched by individual version jobs, including reruns after partial latest copy.
         else:
+            stage = 'aggregation'
             reports = [json.loads(p.read_text()) for p in args.reports.glob('*/report.json')]
             allowed = {(image, 'latest') for image in (HUB, GHCR)}
             with MatrixCopy(allowed) as copier:
@@ -450,8 +537,7 @@ def main(argv=None):
         return 0
     except Exception as error:
         report.update(failed_stage=report['status'], status='failed', error_type=type(error).__name__)
-        if isinstance(error, CommandFailure):
-            report['failure'] = error.failure
+        report['failure'] = failure_details(error, report.get('stage', stage) if stage == 'publication' else stage)
         return 1
     finally:
         (args.output_dir / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
