@@ -59,6 +59,10 @@ class ComposeNetworkingTests(unittest.TestCase):
                 port.get("host_ip", "0.0.0.0")
                 for port in config["services"]["routers"]["ports"]}
 
+    def test_default_image_pins_runtime_capable_wrapper_release(self):
+        self.assertEqual(self.render()["services"]["routers"]["image"],
+                         "hossein3piol/mikrotik-routeros:7.21.4-r1.0.0")
+
     def test_management_bind_ip_is_scoped_and_defaults_to_all_ipv4(self):
         for bind_ip in (None, "", "127.0.0.1", "192.0.2.10"):
             with self.subTest(bind_ip=bind_ip):
@@ -69,6 +73,12 @@ class ComposeNetworkingTests(unittest.TestCase):
                 for (published, target, protocol), host_ip in ports.items():
                     if published not in MANAGEMENT_PORTS:
                         self.assertEqual(host_ip, "0.0.0.0")
+
+    def test_example_image_pins_runtime_capable_wrapper_release(self):
+        example = ROOT / ".env.example"
+        self.assertIn("ROUTEROS_VERSION=7.21.4-r1.0.0", example.read_text().splitlines())
+        self.assertEqual(self.render(env_file=example)["services"]["routers"]["image"],
+                         "hossein3piol/mikrotik-routeros:7.21.4-r1.0.0")
 
     def test_example_explicitly_preserves_public_management_default(self):
         example = ROOT / ".env.example"
@@ -96,9 +106,10 @@ class ComposeNetworkingTests(unittest.TestCase):
         router = config["services"]["routers"]
         self.assertTrue(router["privileged"])
         self.assertEqual(router["healthcheck"], {
-            "test": ["CMD", "nc", "-z", "127.0.0.1", "8291"],
-            "interval": "30s", "timeout": "10s", "retries": 3,
+            "test": ["CMD", "python3", "/routeros/bin/runtime.py", "health"],
+            "interval": "30s", "timeout": "10s", "start_period": "2m0s", "retries": 3,
         })
+        self.assertEqual(router['stop_grace_period'], '1m5s')
 
     def test_openvpn_preserves_tcp_and_adds_udp(self):
         ports = self.ports(self.render())

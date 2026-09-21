@@ -1,0 +1,51 @@
+name: Runtime integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      IMAGE: routeros-integration:${{ github.sha }}
+      EVIDENCE: ${{ github.workspace }}/routeros-evidence
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify isolated runner prerequisites
+        run: |
+          docker version
+          docker compose version
+          test -c /dev/net/tun
+      - name: Build the actual RouterOS image
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          docker build --build-arg SOURCE_REVISION="$SOURCE_REVISION" \
+            --build-arg WRAPPER_VERSION=integration \
+            --tag "$IMAGE" .
+      - name: Test guest networking, health, shutdown and persistence
+        run: |
+          python3 tests/docker-integration.py --run \
+            --image "$IMAGE" --output-dir "$EVIDENCE"
+      - name: Preserve sanitized validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: routeros-runtime-${{ github.run_id }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: warn
+          retention-days: 30

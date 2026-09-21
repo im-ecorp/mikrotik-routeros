@@ -1,7 +1,7 @@
 services:
   routers:
     container_name: "mikrotik"
-    image: hossein3piol/mikrotik-routeros:${ROUTEROS_VERSION:-latest}
+    image: hossein3piol/mikrotik-routeros:${ROUTEROS_VERSION:-7.21.4-r1.0.0}
     privileged: true
     restart: unless-stopped
     environment:
@@ -32,10 +32,12 @@ services:
       - "9000-9100:9000-9100"  # Reserved for custom services
     networks:
       - mikro_network
+    stop_grace_period: 65s
     healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "8291"]
+      test: ["CMD", "python3", "/routeros/bin/runtime.py", "health"]
       interval: 30s
       timeout: 10s
+      start_period: 120s
       retries: 3
 
 networks:
