@@ -13,13 +13,16 @@ boundary against a privileged operator or nested container namespaces.
 `eth0` is enslaved to `qemubr0`, its Docker-assigned IPv4 address is removed from
 the container, and the private DHCP server leases that exact address to RouterOS
 `ether1`. Docker's existing published-port forwarding therefore reaches the guest.
-No host interfaces, routes, firewall rules, or IPAM allocations are modified.
+The runtime does not modify host interfaces, routes, firewall rules, or IPAM
+allocations. The opt-in integration harness separately installs scoped host
+firewall guards on its disposable bridge, as described below.
 The guest disk remains `/routeros/data/chr.vdi`; the existing initializer and
 legacy-disk migration rules are unchanged.
 
 For an **internal** Docker network without a default route, explicitly set
-`ROUTEROS_GATEWAY` to that network's Docker IPAM gateway. The integration harness
-discovers it using `docker network inspect`; do not guess an address. Ordinary
+`ROUTEROS_GATEWAY` to that network's Docker IPAM gateway, discovered using
+`docker network inspect`; do not guess an address. Internal networks do not
+provide the published-port path required by this integration test. Ordinary
 bridge networks derive it from the container's default route. The DHCP server
 uses this gateway address as its server source, without assigning another IPv4
 address to the container. The guest still receives the Docker subnet and gateway.
@@ -82,10 +85,34 @@ python3 tests/docker-integration.py --run \
   --output-dir "$RUNNER_TEMP/routeros-evidence"
 ```
 
-The harness uses unique container/network names, a new internal bridge, ephemeral
-**loopback-only** HTTP/SSH/DNS published ports, and disposable private bind mounts.
-It requires Docker privileges but never prunes unrelated resources. An 840-second
-overall deadline plus bounded cleanup keeps execution within 15 minutes.
+The harness uses unique container/network/bridge names, a normal IPv4 bridge
+with `com.docker.network.bridge.enable_ip_masquerade=false` and IPv4 gateway mode
+`nat`, ephemeral **loopback-only** HTTP/SSH/DNS published ports, and disposable
+private bind mounts. `--internal` is deliberately absent: modern Docker internal
+bridges inhibit the port mappings needed to exercise the real forwarding path.
+Gateway mode `isolated` also requires `--internal` and is not a substitute.
+
+Disabling masquerade alone is **not isolation**. Before starting a guest, the
+harness installs comment-tagged host `iptables` guards in `DOCKER-USER` that
+drop new forwarded traffic entering or leaving only its uniquely named bridge.
+A similarly scoped `INPUT` guard blocks guest-initiated host connections.
+Established/related replies remain eligible for Docker's normal rules so host
+loopback TCP/UDP forwarding can work. Scoped `ip6tables` INPUT/FORWARD guards
+block IPv6 on this IPv4-only lab bridge. It requires root or passwordless
+`sudo -n`, iptables/ip6tables, and Docker's iptables backend with an active
+`FORWARD` jump to `DOCKER-USER`; unsupported backends fail before guest launch.
+It never flushes chains, changes global policies, or prunes unrelated resources.
+Only exact owned rules are deleted, after owned container/network removal; failed
+resource removal retains the isolation guards. Removal errors fail the run.
+The 840-second execution deadline is followed by bounded cleanup operations.
+
+Isolation is checked on first boot, restart and recreation: guest pings toward
+off-subnet TEST-NET address `198.51.100.1` and the host bridge gateway must return
+zero replies **and increment the corresponding scoped DROP counter**. Mere
+timeouts do not count as evidence, and no public service is required. The same
+run must pass loopback HTTP, SSH and UDP DNS checks with these guards installed.
+This is disposable test isolation, not a security boundary against the
+privileged container or a malicious host administrator.
 
 It verifies the actual RouterOS DHCP lease equals Docker's assigned address;
 real HTTP success and SSH banners traverse Docker TCP forwarding; and an actual
@@ -101,7 +128,15 @@ every stop and makes hash-verified cold copies before subsequent disk reuse.
 Passwords are generated in memory and passed only through stdin to a private
 UNIX-socket proxy. Neither raw serial text nor passwords are saved. Sanitized
 `report.json` records image ID/labels, network topology, guest values, checks,
-shutdown events, cold-copy hashes, cleanup results and script hash. Separate
+shutdown events, cold-copy hashes, cleanup results and script hash. Allowlisted
+network diagnostics include `NetworkSettings.Ports`,
+`HostConfig.PortBindings`, and endpoint IP/gateway/network ID, including on
+failure; container environment and raw logs are not copied into the report.
+Docker stop/start must recreate the private network namespace: the entrypoint
+requires fresh single-`eth0` topology, then creates `qemubr0`. It intentionally
+does not delete or reuse an unexpected existing bridge; such topology fails
+closed, and the restart checks must pass on the actual runner.
+Separate
 `*-shutdown.json` files preserve the exact supervisor evidence. Guest disks and
 backups are deleted after successful resource cleanup and must never be uploaded
 as CI artifacts. Failed cleanup is reported as failure; inspect and remove only

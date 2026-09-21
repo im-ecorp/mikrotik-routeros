@@ -123,12 +123,55 @@ class Lab:
         self.data = self.root / 'data'; self.data.mkdir()
         self.shared = self.root / 'shared'; self.shared.mkdir()
         self.report = {'status': 'running', 'name': self.name, 'image': image, 'checks': [],
-                       'isolation': 'Unique internal Docker bridge; loopback ephemeral published ports; disposable bind data; no host network changes',
+                       'isolation': 'Unique IPv4 Docker bridge without masquerade; loopback published ports; host firewall guards scoped to the unique bridge; disposable bind data',
                        'limitations': ['UDP proves configured DNS request/response, not a VPN handshake',
                                        'No in-guest package upgrade is performed'], 'shutdowns': []}
         self.password = 'ChrLab!' + secrets.token_urlsafe(24)
         self.marker = self.name
         self.container_created = self.network_created = False
+        self.bridge = self.name[-12:]
+        self.firewall_rules = []
+
+    def firewall(self, family, *args, check=True):
+        command = (['sudo', '-n'] if os.geteuid() != 0 else [])
+        result = subprocess.run(command + [family, '--wait', '5', *args],
+                                capture_output=True, text=True, timeout=15)
+        if check and result.returncode:
+            raise RuntimeError('Scoped firewall operation failed: ' + family + ' ' + args[0])
+        return result
+
+    def setup_network(self):
+        self.docker('network', 'create', '--driver', 'bridge',
+                    '--opt', 'com.docker.network.bridge.enable_ip_masquerade=false',
+                    '--opt', 'com.docker.network.bridge.gateway_mode_ipv4=nat',
+                    '--opt', 'com.docker.network.bridge.name='+self.bridge,
+                    '--label', 'routeros.integration='+self.name, self.network)
+        self.network_created = True
+        net = json.loads(self.docker('network', 'inspect', self.network).stdout)[0]
+        require(not net['Internal'] and not net.get('EnableIPv6') and net['Driver'] == 'bridge',
+                'Expected IPv4 non-internal bridge for Docker port publishing')
+        require(net['Options'].get('com.docker.network.bridge.enable_ip_masquerade') == 'false'
+                and net['Options'].get('com.docker.network.bridge.name') == self.bridge,
+                'Bridge isolation options differ')
+        self.gateway = net['IPAM']['Config'][0]['Gateway']
+        self.report['network'] = {'internal': net['Internal'], 'ipam': net['IPAM'],
+                                  'bridge': self.bridge, 'options': net['Options']}
+        # Refuse unsupported firewall backends before starting any guest. Never
+        # flush chains, alter policies, or change rules belonging to Docker.
+        self.firewall('iptables', '-C', 'FORWARD', '-j', 'DOCKER-USER')
+        fresh = ['-m', 'conntrack', '!', '--ctstate', 'ESTABLISHED,RELATED']
+        specs = [('iptables', 'DOCKER-USER', ['-i', self.bridge] + fresh),
+                 ('iptables', 'DOCKER-USER', ['-o', self.bridge] + fresh),
+                 ('iptables', 'INPUT', ['-i', self.bridge] + fresh),
+                 ('ip6tables', 'FORWARD', ['-i', self.bridge]),
+                 ('ip6tables', 'FORWARD', ['-o', self.bridge]),
+                 ('ip6tables', 'INPUT', ['-i', self.bridge])]
+        for family, chain, rule in specs:
+            rule += ['-m', 'comment', '--comment', self.name, '-j', 'DROP']
+            # Remember exact rule before insertion, including timeout/interrupt.
+            self.firewall_rules.append((family, chain, rule))
+            self.firewall(family, '-I', chain, '1', *rule)
+            self.firewall(family, '-C', chain, *rule)
 
     def docker(self, *args, timeout=60, check=True):
         result = subprocess.run(['docker', *map(str, args)], capture_output=True, text=True, timeout=timeout)
@@ -194,11 +237,55 @@ class Lab:
             console.send('/quit')
         return version
 
+    def drop_count(self, chain):
+        result = self.firewall('iptables', '-L', chain, '-n', '-v', '-x')
+        rows = [line.split() for line in result.stdout.splitlines()
+                if self.name in line and 'DROP' in line]
+        rows = [row for row in rows if len(row) > 6 and row[5] == self.bridge]
+        require(len(rows) == 1 and rows[0][0].isdigit(), 'Missing scoped firewall counter')
+        return int(rows[0][0])
+
+    def verify_isolation(self):
+        # An unreachable destination is not isolation evidence. Count packets
+        # actually dropped by our bridge-specific guard; no public service is
+        # contacted. TEST-NET is outside the Docker subnet and uses its default
+        # route. Also prove new connections to the host bridge are blocked.
+        probes = []
+        with self.console() as console:
+            console.login(self.password, False)
+            for target, chain in [('198.51.100.1', 'DOCKER-USER'), (self.gateway, 'INPUT')]:
+                before = self.drop_count(chain)
+                received = console.value('IT_ISOLATION', f'/ping address={target} count=3 interval=200ms')
+                after = self.drop_count(chain)
+                require(received == '0' and after - before >= 3,
+                        'Isolation requires zero replies and a counted firewall drop')
+                probes.append({'destination': target, 'chain': chain, 'received': 0,
+                               'dropped_packets': after - before})
+            console.send('/quit')
+        self.report['checks'].append({'external_egress_blocked': True,
+                                      'guest_initiated_host_access_blocked': True, 'probes': probes})
+
+    def network_diagnostics(self):
+        # Explicit allowlist: never serialize Config.Env or raw container logs.
+        info = self.inspect()
+        network = info.get('NetworkSettings', {})
+        diagnostics = {'Ports': network.get('Ports'),
+                       'PortBindings': info.get('HostConfig', {}).get('PortBindings'),
+                       'Networks': {name: {key: values.get(key) for key in
+                                    ('IPAddress', 'Gateway', 'NetworkID')}
+                                    for name, values in network.get('Networks', {}).items()}}
+        self.report['network_diagnostics'] = diagnostics
+        return diagnostics
+
     def protocols(self):
-        ports = self.inspect()['NetworkSettings']['Ports']
+        ports = self.network_diagnostics()['Ports'] or {}
         def port(key):
-            require(ports[key][0]['HostIp'] == '127.0.0.1', 'Port is not loopback bound')
-            return int(ports[key][0]['HostPort'])
+            bindings = ports.get(key)
+            require(bool(bindings), 'Missing published port: ' + key)
+            require(len(bindings) == 1 and bindings[0]['HostIp'] == '127.0.0.1',
+                    'Port is not exclusively loopback bound: ' + key)
+            require(str(bindings[0].get('HostPort', '')).isdigit(), 'Missing host port: ' + key)
+            return int(bindings[0]['HostPort'])
         with socket.create_connection(('127.0.0.1', port('80/tcp')), timeout=5) as conn:
             conn.sendall(b'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n')
             response = conn.recv(4096)
@@ -255,13 +342,7 @@ class Lab:
         seed_version = self.report['image_labels'].get('io.mikrotik-routeros.seed.version')
         require(isinstance(seed_version, str) and seed_version.strip(),
                 'Image seed version label is missing or empty')
-        self.docker('network', 'create', '--internal', '--driver', 'bridge',
-                    '--label', 'routeros.integration='+self.name, self.network)
-        self.network_created = True
-        net = json.loads(self.docker('network', 'inspect', self.network).stdout)[0]
-        require(net['Internal'] and net['Driver'] == 'bridge', 'Network is not isolated bridge')
-        self.gateway = net['IPAM']['Config'][0]['Gateway']
-        self.report['network'] = {'internal': net['Internal'], 'ipam': net['IPAM']}
+        self.setup_network()
         self.create()
         initial_version = self.configure(True)
         # RouterOS appends its channel (for example " (stable)") to the version.
@@ -270,6 +351,7 @@ class Lab:
         self.report['checks'].append({'seed_version': seed_version,
                                       'fresh_guest_matches_seed': True})
         self.protocols()
+        self.verify_isolation()
         # QMP still says running: loss of the DHCP address must fail ARP health.
         with self.console() as console:
             console.login(self.password, False)
@@ -289,12 +371,14 @@ class Lab:
         self.docker('start', self.name)
         require(self.configure(False) == initial_version, 'Restart changed guest version')
         self.protocols()
+        self.verify_isolation()
         self.stop('recreate')
         self.backup('before-recreate')
         self.docker('rm', self.name); self.container_created = False
         self.create()
         require(self.configure(False) == initial_version, 'Recreation changed guest version')
         self.protocols()
+        self.verify_isolation()
         self.stop('final')
         self.backup('final')
         self.report['status'] = 'passed'
@@ -310,6 +394,19 @@ class Lab:
             result = self.docker('network', 'rm', self.network, timeout=30, check=False)
             if result.returncode:
                 errors.append('network removal failed')
+        # Keep isolation intact if any guest or network failed to disappear.
+        if not errors:
+            for family, chain, rule in reversed(self.firewall_rules):
+                try:
+                    exists = self.firewall(family, '-C', chain, *rule, check=False)
+                    if exists.returncode == 0:
+                        self.firewall(family, '-D', chain, *rule)
+                    else:
+                        require(exists.returncode == 1, 'Cannot inspect firewall rule')
+                    require(self.firewall(family, '-C', chain, *rule, check=False).returncode == 1,
+                            'Scoped firewall rule still present')
+                except Exception:
+                    errors.append('scoped firewall cleanup failed: '+family+' '+chain)
         self.report['cleanup_errors'] = errors
         if errors:
             self.report['status'] = 'failed'
@@ -340,6 +437,11 @@ def main():
     except Exception as error:
         lab.report['status'] = 'failed'
         lab.report['error'] = f'{type(error).__name__}: {error}'.replace(lab.password, '[REDACTED]')
+        if lab.container_created:
+            try:
+                lab.network_diagnostics()
+            except Exception as diagnostic_error:
+                lab.report['network_diagnostics_error'] = type(diagnostic_error).__name__
     finally:
         signal.alarm(0)
         try:
