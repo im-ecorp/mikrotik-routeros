@@ -5,6 +5,8 @@ LABEL description="MikroTik RouterOS CHR running inside Docker using QEMU"
 
 # Seed selection initializes new disks; it never upgrades an existing guest.
 ARG ROUTEROS_VERSION=7.21.4
+# Vendor checksum of chr-7.21.4.vdi.zip; other seeds must override both args.
+ARG ROUTEROS_SHA256=b4c5036d24a1ae4490758843aae0c8af2b41237dd69832c770621ee72341db0f
 ARG WRAPPER_VERSION=dev
 ARG SOURCE_REVISION=unknown
 ARG SOURCE_URL=https://github.com/im-ecorp/mikrotik-routeros
@@ -12,7 +14,8 @@ ARG SOURCE_URL=https://github.com/im-ecorp/mikrotik-routeros
 LABEL org.opencontainers.image.version=$WRAPPER_VERSION \
       org.opencontainers.image.revision=$SOURCE_REVISION \
       org.opencontainers.image.source=$SOURCE_URL \
-      io.mikrotik-routeros.seed.version=$ROUTEROS_VERSION
+      io.mikrotik-routeros.seed.version=$ROUTEROS_VERSION \
+      io.mikrotik-routeros.seed.sha256=$ROUTEROS_SHA256
 
 ENV ROUTEROS_VERSION=$ROUTEROS_VERSION
 ENV ROUTEROS_IMAGE=chr-$ROUTEROS_VERSION.vdi
@@ -33,7 +36,8 @@ RUN apk add --no-cache \
     unzip
 
 RUN mkdir /routeros && \
-    wget "${ROUTEROS_URL}" -O /routeros/image.zip && \
+    wget --timeout=60 --tries=3 "${ROUTEROS_URL}" -O /routeros/image.zip && \
+    printf '%s  /routeros/image.zip\n' "$ROUTEROS_SHA256" | sha256sum -c - && \
     unzip /routeros/image.zip -d /routeros && \
     rm -f /routeros/image.zip
 

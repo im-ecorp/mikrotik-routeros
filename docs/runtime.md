@@ -163,5 +163,27 @@ backups are deleted after successful resource cleanup and must never be uploaded
 as CI artifacts. Failed cleanup is reported as failure; inspect and remove only
 the uniquely named test resources before discarding any retained private files.
 
+### RouterOS 6 and current-version qualification
+
+Do not infer the login flow from the major version. Vendor-checksummed CHR
+6.49.22, 7.24.4 and 7.25beta5 all exercised the existing forced fresh-password
+flow in isolated QEMU TCG probes. No blank-password fallback or authentication
+bypass is needed for those seeds. The same identity, HTTP/SSH service and static
+DNS configuration commands read back correctly on all three. Disabled DHCP on
+6.49.22 can return an empty status; the serial value parser accepts an anchored
+empty result instead of timing out. Diagnostics classify that status as unknown,
+not bound, and still require the disabled flag and subsequent bound address.
+
+These are **partial offline results**, not release qualification. All three
+answered the production zero-source ARP frame and produced guest-origin ACPI
+shutdown events with QEMU exit zero. In restricted user-network tests, 7.24.4 and
+7.25beta5 retained password, identity and service/DNS configuration across cold
+restart. The 6.49.22 probe did **not** retain password/identity across cold restart,
+despite clean shutdown; its cause remains unresolved. Loopback protocol attempts
+under restricted QEMU user networking also timed out (including DNS on 7.24.4).
+Those failures must not be treated as passes or used to weaken hosted protocol,
+health, persistence or shutdown assertions. No runtime workaround is justified
+by these probes alone; the actual per-version Docker matrix remains required.
+
 A local environment without Docker can run protocol/unit tests and the offline
 QEMU proof but must report Docker integration as **not run**, not passed.

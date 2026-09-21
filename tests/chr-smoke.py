@@ -137,7 +137,7 @@ class VM:
 
     def value(self, tag, expression):
         self.send(f':put ("{tag}=" . [{expression}])')
-        _, match = self.expect([rf"^{re.escape(tag)}=([^\n]+)\n"], tag)
+        _, match = self.expect([rf"^{re.escape(tag)}=([^\n]*)\n"], tag)
         value = match.group(1).strip()
         self.expect([PROMPT], f"{tag} prompt")
         return value
