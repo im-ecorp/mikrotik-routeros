@@ -522,17 +522,36 @@ class RecoveryTests(unittest.TestCase):
         failure here marks a successful recovery as failed and blocks aggregation.
         Run each step exactly as Actions does: a file outside the repo, cwd at the root.
         """
+        import re
         import subprocess
         import sys
-        import yaml
-        workflow = yaml.safe_load((ROOT / '.github/workflows/chr-matrix-recovery.yml').read_text())
-        steps = [(job, step) for job, spec in workflow['jobs'].items()
-                 for step in spec['steps'] if step.get('shell') == 'python']
-        self.assertEqual(len(steps), 3, 'every python evidence step must be covered')
-        for job, step in steps:
+        import textwrap
+        # Parsed as text on purpose: the runner has no PyYAML and this repo has
+        # no Python dependencies, so a yaml import here would fail only in CI.
+        lines = (ROOT / '.github/workflows/chr-matrix-recovery.yml').read_text().splitlines()
+        steps = []
+        for index, line in enumerate(lines):
+            if line.strip() != 'shell: python':
+                continue
+            job = next(n.strip().rstrip(':') for n in reversed(lines[:index])
+                       if re.fullmatch(r'  [a-z][a-z0-9_-]*:', n))
+            cursor = index + 1
+            while lines[cursor].strip() != 'run: |':
+                cursor += 1
+            indent = len(lines[cursor]) - len(lines[cursor].lstrip())
+            body = []
+            cursor += 1
+            while cursor < len(lines) and (not lines[cursor].strip()
+                                           or len(lines[cursor]) - len(lines[cursor].lstrip()) > indent):
+                body.append(lines[cursor])
+                cursor += 1
+            steps.append((job, textwrap.dedent('\n'.join(body))))
+        self.assertEqual([job for job, _ in steps], ['preflight', 'variant', 'aggregate'])
+        for job, code in steps:
+            self.assertIn('recovery-output/report.json', code)
             with self.subTest(job=job), tempfile.TemporaryDirectory() as directory:
                 outside = Path(directory) / 'step.py'
-                outside.write_text(step['run'])
+                outside.write_text(code)
                 workspace = Path(directory) / 'workspace'
                 workspace.mkdir()
                 # A report already exists, so the step must fall through without writing.
