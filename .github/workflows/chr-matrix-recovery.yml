@@ -1,0 +1,247 @@
+name: Recover original CHR matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      approve_version_overwrite:
+        description: 'Recover only seven failures from 35607084875; latest 7.24.4 requires all 17 original-source qualifications'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+concurrency:
+  group: chr-image-publication
+  cancel-in-progress: false
+
+env:
+  APPROVE_VERSION_OVERWRITE: ${{ inputs.approve_version_overwrite }}
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main' && github.repository == 'im-ecorp/mikrotik-routeros' && inputs.approve_version_overwrite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: docker/setup-compose-action@v1
+        with:
+          version: v5.5.1
+      - name: Validate executor with required Compose
+        env:
+          REQUIRE_COMPOSE: '1'
+        run: |
+          docker compose --env-file .env.example -f docker-compose.yml config --quiet
+          for script in bin/*.sh bin/qemu-ifup bin/qemu-ifdown; do bash -n "$script"; done
+          python3 -m unittest discover -s tests -q
+      - uses: actions/checkout@v4
+        with:
+          ref: 858d85fd17ff720df88a65b44ec65ecf198dd8dd
+          path: original-source
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 35607084875
+          github-token: ${{ github.token }}
+          name: chr-matrix-snapshot
+          path: original-snapshot
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 35607084875
+          github-token: ${{ github.token }}
+          pattern: chr-matrix-version-*
+          path: original-reports
+          merge-multiple: false
+      - name: Verify pinned evidence, original successes, preserved references and all destinations
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/chr_recovery.py preflight
+      - name: Keep prerequisite failures visible
+        if: always()
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          p = Path('recovery-output/report.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          if not p.exists():
+              p.write_text(json.dumps({'status': 'failed', 'stage': 'preflight-prerequisites'}))
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chr-recovery-preflight-${{ github.run_attempt }}
+          path: recovery-output/report.json
+          retention-days: 90
+          if-no-files-found: error
+
+  variant:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        version: ['6.49.21', '6.49.22', '7.23.5', '7.24.2', '7.24.3', '7.24.4', '7.25beta5']
+    env:
+      CHR_VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 858d85fd17ff720df88a65b44ec65ecf198dd8dd
+          path: original-source
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 35607084875
+          github-token: ${{ github.token }}
+          name: chr-matrix-snapshot
+          path: original-snapshot
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 35607084875
+          github-token: ${{ github.token }}
+          pattern: chr-matrix-version-*
+          path: original-reports
+          merge-multiple: false
+      - name: Disposable Docker prerequisites
+        run: |
+          docker version
+          docker compose version
+          test -c /dev/net/tun
+          sudo apt-get update -qq
+          sudo apt-get install -y skopeo
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Instrumented original-source recovery with unchanged runtime gates
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/chr_recovery.py variant
+      - name: Keep prerequisite failures visible
+        if: always()
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          from scripts.chr_recovery import identity, ORIGINAL_RUN_ID, ORIGINAL_SOURCE_SHA
+          p = Path('recovery-output/report.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          if not p.exists():
+              p.write_text(json.dumps({'status': 'failed', 'stage': 'variant-prerequisites',
+                  'version': os.environ['CHR_VERSION'], 'source_sha': ORIGINAL_SOURCE_SHA,
+                  'run_id': ORIGINAL_RUN_ID, 'recovery': identity()}))
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chr-recovery-version-${{ matrix.version }}-${{ github.run_attempt }}
+          path: recovery-output/report.json
+          retention-days: 90
+          if-no-files-found: error
+
+  aggregate:
+    needs: [preflight, variant]
+    if: always() && needs.preflight.result == 'success' && needs.variant.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 858d85fd17ff720df88a65b44ec65ecf198dd8dd
+          path: original-source
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 35607084875
+          github-token: ${{ github.token }}
+          name: chr-matrix-snapshot
+          path: original-snapshot
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 35607084875
+          github-token: ${{ github.token }}
+          pattern: chr-matrix-version-*
+          path: original-reports
+          merge-multiple: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chr-recovery-version-*
+          path: recovery-reports
+          merge-multiple: false
+      - name: Install digest-preserving copier
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y skopeo
+      - name: Require ten pinned originals plus seven recovery qualifications before latest
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/chr_recovery.py aggregate
+      - name: Keep prerequisite failures visible
+        if: always()
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          p = Path('recovery-output/report.json')
+          p.parent.mkdir(parents=True, exist_ok=True)
+          if not p.exists():
+              p.write_text(json.dumps({'status': 'failed', 'stage': 'aggregate-prerequisites'}))
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chr-recovery-aggregate-${{ github.run_attempt }}
+          path: recovery-output/report.json
+          retention-days: 90
+          if-no-files-found: error
