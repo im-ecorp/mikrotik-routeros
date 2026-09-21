@@ -75,16 +75,27 @@ Copy the example and set your desired RouterOS version:
 
 ```sh
 cp .env.example .env
-# Edit .env and set ROUTEROS_VERSION and optionally TZ
+# Edit .env: set ROUTEROS_VERSION, MANAGEMENT_BIND_IP and optionally TZ
 ```
 
 **.env example:**
 ```sh
 ROUTEROS_VERSION=7.22.2
 TZ=Asia/Tehran
+# Recommended for a new setup; remote access requires an SSH tunnel:
+MANAGEMENT_BIND_IP=127.0.0.1
 ```
 
 If `.env` is omitted, the `latest` tag and `Asia/Tehran` timezone are used by default.
+`MANAGEMENT_BIND_IP` defaults to `0.0.0.0` (all host IPv4 addresses) when unset or
+empty. The checked-in `.env.example` preserves that compatibility default; change
+it explicitly to `127.0.0.1` before first boot for local/tunneled management.
+
+**First-boot warning:** A fresh CHR may permit `admin` without a password. Do not
+expose management to an untrusted network while setting credentials. Loopback
+binding prevents direct remote management access; establish an SSH tunnel through
+the **Docker host**, not RouterOS. See [networking and the tunnel example](docs/networking.md).
+VPN and custom mappings remain unrestricted by `MANAGEMENT_BIND_IP`.
 
 ### 3. Start the container
 
@@ -94,6 +105,9 @@ docker compose up -d
 
 ### 4. Connect to MikroTik
 
+These addresses assume the compatibility/public binding. With `127.0.0.1`, use
+the local endpoints in the [SSH tunnel example](docs/networking.md#management-bindings-and-bootstrap-risk).
+
 | Method | Address |
 |---|---|
 | **Winbox** | `<server-ip>:8291` |
@@ -101,7 +115,8 @@ docker compose up -d
 | **WebFig** | `http://<server-ip>:80` |
 | **API** | `<server-ip>:8728` |
 
-Default credentials: `admin` / *(no password — set one immediately)*
+Default credentials on a fresh CHR may be `admin` / *(no password — set one immediately)*.
+Port publication does not enable a RouterOS service or configure its firewall.
 
 ---
 
@@ -143,7 +158,8 @@ Regardless of the host CPU architecture, QEMU always emulates an x86_64 machine 
 ├── shared/                    # Auto-created — shared with MikroTik File Manager
 ├── .github/
 │   └── workflows/
-│       └── docker-image.yml   # CI/CD pipeline for building & publishing images
+│       ├── docker-image.yml   # Manual image publishing
+│       └── validate.yml       # PR/main checks; no publication or deployment
 ├── Dockerfile
 ├── docker-compose.yml
 └── .env.example
@@ -170,15 +186,25 @@ Regardless of the host CPU architecture, QEMU always emulates an x86_64 machine 
 | `80` | TCP | WebFig (HTTP) |
 | `443` | TCP | WebFig (HTTPS) |
 | `1194` | TCP/UDP | OpenVPN |
+| `1450` | TCP | Legacy custom mapping; purpose unknown, not L2TP |
 | `1701` | UDP | L2TP |
-| `1723` | TCP | PPTP |
+| `1723` | TCP | PPTP control only; also requires GRE |
 | `8291` | TCP | Winbox |
 | `8728` | TCP | RouterOS API |
 | `8729` | TCP | RouterOS API-SSL |
 | `13231` | UDP | WireGuard |
 | `9000–9100` | TCP | Reserved for custom services |
 
-> **Tip:** If you need to reassign a default MikroTik service port, use any port in the `9000–9100` range — it will be immediately reachable without modifying `docker-compose.yml`.
+Management TCP ports (`21`, `2222`, `23`, `80`, `443`, `8291`, `8728`, `8729`) use
+`MANAGEMENT_BIND_IP`. VPN and custom ports do not. A service on `9000–9100` must be
+configured to listen on TCP and allowed through the guest/host firewall and NAT;
+moving management there bypasses the management binding restriction.
+
+**VPN limitations:** UDP `1701` is L2TP, not a complete L2TP/IPsec setup. IPsec also
+needs UDP `500`/`4500` (not published here) and potentially ESP (IP protocol 50).
+PPTP requires GRE (IP protocol 47), not merely TCP `1723`. ESP and GRE are not
+TCP/UDP ports and cannot be added as normal port mappings. Publishing a port does
+not enable the service or prove a working VPN. See [networking scope and limitations](docs/networking.md).
 
 ---
 
@@ -214,6 +240,14 @@ backup, shut down RouterOS inside the guest before stopping the service; see the
 ---
 
 ## CI/CD: Building and Publishing Images
+
+A separate `.github/workflows/validate.yml` runs on pull requests and pushes to
+`main` with `contents: read`. It installs Docker Compose, requires a successful
+version/config check, runs `bash -n` and `python3 -m unittest discover -s tests -v`,
+and never publishes or deploys. Networking tests render actual Compose JSON;
+[local validation](docs/networking.md#local-and-automatic-validation) supports a
+standalone `COMPOSE_BINARY` and needs no Docker daemon. Missing Compose may skip
+locally, but is an error in CI. Existing ShellCheck findings are not a new gate.
 
 A GitHub Actions workflow is included at `.github/workflows/docker-image.yml`. It builds a multi-architecture image and pushes it to both Docker Hub and GitHub Container Registry (GHCR).
 
@@ -302,6 +336,9 @@ Define user credentials under **PPP → Secrets**.
 
 Create an OpenVPN Server interface under **Interfaces → OpenVPN Server**.
 The example below uses port `4646` instead of the default `1194`.
+Add a matching TCP or UDP mapping to Compose for `4646` and match the server/client
+transport; that port is not published by the default file. Publishing both
+transports on `1194` does not enable both on the RouterOS server.
 
 ![interface](./media/5.png)
 

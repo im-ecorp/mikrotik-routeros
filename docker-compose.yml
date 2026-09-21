@@ -14,19 +14,21 @@ services:
       - ./data:/routeros/data
       - ./shared:/routeros/shared
     ports:
-      - "21:21"           # FTP
-      - "2222:22"         # SSH (remapped to avoid host conflict)
-      - "23:23"           # Telnet
-      - "80:80"           # HTTP / WebFig
-      - "443:443"         # HTTPS / WebFig SSL
-      - "1194:1194"       # OpenVPN
-      - "1450:1450"       # L2TP
-      - "1701:1701"       # L2TP/IPsec
+      # Compatibility default is public IPv4; use 127.0.0.1 + SSH tunneling.
+      - "${MANAGEMENT_BIND_IP:-0.0.0.0}:21:21/tcp"     # FTP
+      - "${MANAGEMENT_BIND_IP:-0.0.0.0}:2222:22/tcp"   # SSH (host port 22 unchanged)
+      - "${MANAGEMENT_BIND_IP:-0.0.0.0}:23:23/tcp"     # Telnet
+      - "${MANAGEMENT_BIND_IP:-0.0.0.0}:80:80/tcp"     # HTTP / WebFig
+      - "${MANAGEMENT_BIND_IP:-0.0.0.0}:443:443/tcp"   # HTTPS / WebFig SSL
+      - "1194:1194/tcp"   # OpenVPN (existing TCP clients)
+      - "1194:1194/udp"   # OpenVPN (configure UDP in RouterOS)
+      - "1450:1450/tcp"   # Legacy custom mapping; purpose unknown, NOT L2TP
+      - "1701:1701/udp"   # L2TP (not a complete IPsec setup)
       - "1723:1723"       # PPTP
-      - "8291:8291"       # Winbox
-      - "8728:8728"       # RouterOS API
-      - "8729:8729"       # RouterOS API-SSL
-      - "13231:13231"     # WireGuard
+      - "${MANAGEMENT_BIND_IP:-0.0.0.0}:8291:8291/tcp" # Winbox
+      - "${MANAGEMENT_BIND_IP:-0.0.0.0}:8728:8728/tcp" # RouterOS API
+      - "${MANAGEMENT_BIND_IP:-0.0.0.0}:8729:8729/tcp" # RouterOS API-SSL
+      - "13231:13231/udp" # WireGuard
       - "9000-9100:9000-9100"  # Reserved for custom services
     networks:
       - mikro_network
