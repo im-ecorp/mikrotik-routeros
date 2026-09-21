@@ -496,7 +496,7 @@ class RecoveryTests(unittest.TestCase):
                          'run-id: 35607084875', 'name: chr-matrix-snapshot',
                          'ref: 858d85fd17ff720df88a65b44ec65ecf198dd8dd', 'path: original-source',
                          'ref: ${{ github.sha }}', 'persist-credentials: false',
-                         'fail-fast: false', 'max-parallel: 3', 'if: always()',
+                         'fail-fast: false', 'max-parallel: 1', 'if: always()',
                          'python3 scripts/chr_recovery.py preflight', 'python3 scripts/chr_recovery.py variant',
                          'python3 scripts/chr_recovery.py aggregate',
                          'name: chr-recovery-version-${{ matrix.version }}-${{ github.run_attempt }}',
