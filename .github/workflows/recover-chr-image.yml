@@ -1,0 +1,56 @@
+name: Recover tested CHR 7.21.4 image
+
+on:
+  workflow_dispatch:
+    inputs:
+      approve_version_overwrite:
+        description: 'Approve the bounded 7.21.4/v7.21.4 recovery to the tested digest; no rebuild'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chr-image-publication
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    if: github.ref == 'refs/heads/main' && github.repository == 'im-ecorp/mikrotik-routeros' && inputs.approve_version_overwrite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install digest-preserving registry transport
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y skopeo
+          skopeo --version
+      - name: Recover only the explicitly authorized references
+        env:
+          APPROVE_VERSION_OVERWRITE: ${{ inputs.approve_version_overwrite }}
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+          TMPDIR: ${{ runner.temp }}
+        run: python3 scripts/image_release.py recover
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recovery-manifest
+          path: recovery-manifest.json
+          if-no-files-found: error
+          retention-days: 90

@@ -25,7 +25,7 @@ Because QEMU handles the x86_64 emulation layer, the Docker image itself is buil
 
 | Feature | Description |
 |---|---|
-| **Multi-Architecture** | New wrapper releases target `amd64` and `arm64`; qualification differs by platform |
+| **Multi-Architecture** | New CHR image releases target `amd64` and `arm64`; qualification differs by platform |
 | **Persistent Storage** | Router configuration survives container rebuilds via a host-mounted virtual drive |
 | **Host ↔ Guest File Sharing** | A local directory is exposed inside MikroTik's File Manager as a virtual FAT drive |
 | **Safe SSH Access** | MikroTik SSH is remapped to port `2222` — your host SSH on port `22` is untouched |
@@ -48,13 +48,13 @@ Because QEMU handles the x86_64 emulation layer, the Docker image itself is buil
 
 ## Supported Architectures
 
-| Architecture | New wrapper release status |
+| Architecture | New CHR image release status |
 |---|---|
 | `linux/amd64` | Qualified through Docker runtime integration before publication |
 | `linux/arm64` | Cross-built; not runtime-qualified |
 
 Legacy tags may include `arm/v7`, `arm/v6`, and `386`; these platforms are not
-published by the new wrapper release workflow. Do not substitute a legacy image
+published by the new CHR image release workflow. Do not substitute a legacy image
 and assume it contains the new health, shutdown, or disk migration code.
 
 ---
@@ -77,19 +77,20 @@ cp .env.example .env
 # Edit .env: set ROUTEROS_VERSION, MANAGEMENT_BIND_IP and optionally TZ
 ```
 
-**.env example (use a published wrapper release):**
+**.env example (use a published CHR image release):**
 ```sh
-ROUTEROS_VERSION=7.21.4-r1.0.0
+ROUTEROS_VERSION=7.21.4
 TZ=Asia/Tehran
 # Recommended for a new setup; remote access requires an SSH tunnel:
 MANAGEMENT_BIND_IP=127.0.0.1
 ```
 
-If `.env` is omitted, the `7.21.4-r1.0.0` tag and `Asia/Tehran` timezone are used by default.
-This Compose file requires a published wrapper tag containing
-`/routeros/bin/runtime.py`; legacy `latest`, `7.21.4`, and `v7.21.4` images do not
-satisfy its health-check contract and are not overwritten by wrapper releases.
-Confirm tag availability in the corresponding GitHub Release before starting.
+If `.env` is omitted, the `7.21.4` tag and `Asia/Tehran` timezone are used by default.
+Public image tags are CHR seed versions: `7.21.4` and `v7.21.4`.
+Before using these aliases, confirm the successful [recovery manifest](docs/releases.md#bounded-exact-digest-recovery)
+shows the runtime-capable image in both registries. The previous alias digest does
+not contain `/routeros/bin/runtime.py`; `latest` remains untouched and is not the
+Compose default. Pin the verified digest for an immutable deployment.
 `MANAGEMENT_BIND_IP` defaults to `0.0.0.0` (all host IPv4 addresses) when unset or
 empty. The checked-in `.env.example` preserves that compatibility default; change
 it explicitly to `127.0.0.1` before first boot for local/tunneled management.
@@ -259,24 +260,22 @@ forwarding, UDP DNS, health transitions, guest-clean stop/start, and recreation
 persistence. Its evidence is uploaded separately from authentication-bearing
 disks. See [runtime validation](docs/runtime.md).
 
-`Publish wrapper release` is manual and main-only. It requires successful `Validate`
-and `Runtime integration` main-push runs for the **exact source SHA** before
-publishing to Docker Hub and GHCR. Inputs are `release_version` (for example
-`1.0.0`) and `routeros_version` (the runtime-tested seed, currently `7.21.4`).
-Docker Hub uses `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`; GHCR uses the scoped
-workflow `GITHUB_TOKEN`, not a personal access token.
-
-Example release tags (availability is established by the corresponding GitHub Release):
+`Publish CHR image` is manual and main-only. Successful `Validate` and
+`Runtime integration` main-push runs must cover the **exact source SHA**.
+Public aliases are the tested CHR seed version and its `v` alias:
 
 ```text
-hossein3piol/mikrotik-routeros:7.21.4-r1.0.0
-ghcr.io/im-ecorp/mikrotik-routeros:7.21.4-r1.0.0
+hossein3piol/mikrotik-routeros:7.21.4
+ghcr.io/im-ecorp/mikrotik-routeros:7.21.4
+# Both registries also publish v7.21.4 and sha-<full-source-SHA>.
 ```
 
-A `sha-<full-source-SHA>` tag identifies the same manifest. Existing tags are
-refused; `latest`, `7.21.4`, and `v7.21.4` are not overwritten. OCI labels record
-wrapper version, source revision, and seed separately. See [release procedure,
-platform qualifications, and recovery](docs/releases.md).
+Existing CHR aliases require the explicit `approve_version_overwrite=true`
+boolean dispatch input. SHA tags are never overwritten. No workflow writes
+`latest` or creates new `-r` suffix tags. Internal wrapper metadata remains in
+OCI labels, separate from the CHR seed version. Docker Hub uses
+`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`; GHCR uses the scoped `GITHUB_TOKEN`.
+See [release gates, platform qualifications, and exact-digest recovery](docs/releases.md).
 
 ---
 

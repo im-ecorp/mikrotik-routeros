@@ -61,7 +61,7 @@ class ComposeNetworkingTests(unittest.TestCase):
 
     def test_default_image_pins_runtime_capable_wrapper_release(self):
         self.assertEqual(self.render()["services"]["routers"]["image"],
-                         "hossein3piol/mikrotik-routeros:7.21.4-r1.0.0")
+                         "hossein3piol/mikrotik-routeros:7.21.4")
 
     def test_management_bind_ip_is_scoped_and_defaults_to_all_ipv4(self):
         for bind_ip in (None, "", "127.0.0.1", "192.0.2.10"):
@@ -76,9 +76,9 @@ class ComposeNetworkingTests(unittest.TestCase):
 
     def test_example_image_pins_runtime_capable_wrapper_release(self):
         example = ROOT / ".env.example"
-        self.assertIn("ROUTEROS_VERSION=7.21.4-r1.0.0", example.read_text().splitlines())
+        self.assertIn("ROUTEROS_VERSION=7.21.4", example.read_text().splitlines())
         self.assertEqual(self.render(env_file=example)["services"]["routers"]["image"],
-                         "hossein3piol/mikrotik-routeros:7.21.4-r1.0.0")
+                         "hossein3piol/mikrotik-routeros:7.21.4")
 
     def test_example_explicitly_preserves_public_management_default(self):
         example = ROOT / ".env.example"
