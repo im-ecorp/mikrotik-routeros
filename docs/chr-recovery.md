@@ -29,6 +29,14 @@ unchanged matrix policy. Original labels and top-level `run_id`/`source_sha` sta
 unchanged; the `recovery` object records executor SHA, actual recovery run/attempt,
 original run and snapshot hash. The ten originals are never rewritten.
 
+Variant jobs run **one at a time** (`max-parallel: 1`). Two full runs showed the
+qualification is timing-sensitive when three QEMU TCG guests share a runner:
+7.24.3 passed at 21 checks then failed at 14, and 7.24.2 stopped at 14 checks then
+19. Versions that pass do so in 131-138 seconds; a stalled one spends ~110 extra
+seconds in a serial read before the harness gives up. 6.49.21 and 6.49.22 fail
+identically at 1 shutdown and 11 checks in every attempt and are a separate,
+guest-side problem that serialising does not address.
+
 Artifacts have attempt-specific names, without overwrite. Aggregation requires
 both `needs.preflight.result` and `needs.variant.result` to be `success`. That
 matrix summary alone is not proof of every version's last execution on selective

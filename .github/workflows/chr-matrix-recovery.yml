@@ -106,7 +106,12 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      max-parallel: 3
+      # One guest at a time. Runs 35656139663 and 35667609143 showed 7.24.3 pass
+      # then fail, and 7.24.2 stop at 14 then 19 checks, while three QEMU TCG
+      # guests shared a runner. Versions that pass do so in 131-138s; these
+      # stall ~110s in a serial read instead. 6.49.21/6.49.22 fail identically
+      # (1 shutdown, 11 checks) regardless and are not addressed by this.
+      max-parallel: 1
       matrix:
         version: ['6.49.21', '6.49.22', '7.23.5', '7.24.2', '7.24.3', '7.24.4', '7.25beta5']
     env:
