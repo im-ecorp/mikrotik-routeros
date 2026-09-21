@@ -50,13 +50,13 @@ jobs:
           ref: 858d85fd17ff720df88a65b44ec65ecf198dd8dd
           path: original-source
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           run-id: 35607084875
           github-token: ${{ github.token }}
           name: chr-matrix-snapshot
           path: original-snapshot
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           run-id: 35607084875
           github-token: ${{ github.token }}
@@ -124,13 +124,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           run-id: 35607084875
           github-token: ${{ github.token }}
           name: chr-matrix-snapshot
           path: original-snapshot
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           run-id: 35607084875
           github-token: ${{ github.token }}
@@ -139,7 +139,7 @@ jobs:
           merge-multiple: false
       # Any attempt's content is equally valid: entries are digest-addressed and
       # re-hashed on import. Missing content only costs reads, so never fail here.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: chr-recovery-content-*
@@ -215,27 +215,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           run-id: 35607084875
           github-token: ${{ github.token }}
           name: chr-matrix-snapshot
           path: original-snapshot
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           run-id: 35607084875
           github-token: ${{ github.token }}
           pattern: chr-matrix-version-*
           path: original-reports
           merge-multiple: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: chr-recovery-version-*
           path: recovery-reports
           merge-multiple: false
       # Any attempt's content is equally valid: entries are digest-addressed and
       # re-hashed on import. Missing content only costs reads, so never fail here.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: chr-recovery-content-*
