@@ -1,6 +1,5 @@
 """Current website release scope is deliberately separate from default-seed CI."""
 import copy
-import importlib.util
 import json
 from pathlib import Path
 import unittest

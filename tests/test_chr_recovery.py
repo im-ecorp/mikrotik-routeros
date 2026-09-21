@@ -1,5 +1,4 @@
 """Offline guardrails for the fixed original-dispatch recovery."""
-import copy
 import hashlib
 import json
 import os

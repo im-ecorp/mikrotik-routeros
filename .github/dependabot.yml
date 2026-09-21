@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Actions are pinned to major tags today. Dependabot keeps them current and,
+  # once any action is pinned to a commit SHA, will maintain that SHA too.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"

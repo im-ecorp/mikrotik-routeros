@@ -29,7 +29,6 @@ class RegistryDiagnosticsTests(unittest.TestCase):
 
     def test_registry_response_failures_never_copy_private_data(self):
         raw = b'{"schemaVersion":2}'
-        digest = 'sha256:' + hashlib.sha256(raw).hexdigest()
         cases = [
             ([(200, SECRET.encode(), {})], 'token', 'invalid_json', 200, 1),
             ([(200, b'[]', {})], 'token', 'token_missing', 200, 1),

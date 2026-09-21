@@ -1,0 +1,12 @@
+# Correctness linting only. The rules here catch defects that unit tests cannot
+# see - undefined names, unused imports, dead assignments, syntax errors.
+#
+# Style rules are deliberately NOT enabled. This codebase sorts imports by module
+# name regardless of import form (import json / from pathlib import Path / import re),
+# which is internally consistent; isort would churn every file for no defect found.
+line-length = 120
+target-version = "py312"
+extend-exclude = [".ruff_cache"]
+
+[lint]
+select = ["E9", "F"]

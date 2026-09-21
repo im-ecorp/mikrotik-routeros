@@ -32,6 +32,10 @@ jobs:
         run: |
           docker compose version
           docker compose --env-file .env.example -f docker-compose.yml config --quiet
+      - name: Lint Python for correctness defects
+        run: |
+          pipx install ruff==0.16.8
+          ruff check --no-cache .
       - name: Check shell syntax
         run: |
           for script in bin/*.sh bin/qemu-ifup bin/qemu-ifdown; do
