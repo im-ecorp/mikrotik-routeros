@@ -119,7 +119,11 @@ real HTTP success and SSH banners traverse Docker TCP forwarding; and an actual
 UDP DNS query returns the configured `chr-integration.invalid` A record
 `192.0.2.42` with the matching transaction ID. This UDP test is explicitly **not a
 VPN handshake test**. It disables/re-enables the guest DHCP client to check ARP
-health independently, then pauses/resumes the guest through QMP to require Docker
+health independently. Console mutations wait for a unique, anchored completion
+tag, not a potentially stale/redrawn prompt. The test reads back the DHCP
+`disabled` flag on both sides and keeps the console connected until recovery;
+success additionally requires a bound lease matching Docker's assigned address.
+It then pauses/resumes the guest through QMP to require Docker
 healthy → unhealthy → healthy transitions, then checks password, identity,
 version, DHCP and TCP/UDP persistence through a stop/start and removal/recreation
 using the same stable disk. It requires guest-origin clean-shutdown evidence at
@@ -132,6 +136,23 @@ shutdown events, cold-copy hashes, cleanup results and script hash. Allowlisted
 network diagnostics include `NetworkSettings.Ports`,
 `HostConfig.PortBindings`, and endpoint IP/gateway/network ID, including on
 failure; container environment and raw logs are not copied into the report.
+DHCP transition diagnostics contain only phase, disabled flag, allowlisted status
+and validated IPv4 address (null when unbound), or an exception type. Health
+failures additionally retain container running/exit status, Docker health state,
+failing streak and health-log exit codes (never log output), allowlisted QMP
+`query-status`, and the exit code of a fresh production health probe. Diagnostics
+do not convert failures to passes or extend the 160-second recovery deadline.
+
+A successful initial lease does not prove unicast renewal works: BusyBox's `-I`
+sets both reply source and DHCP server identifier, but does not assign an address
+or intercept packets addressed to it. With the gateway identifier, renewal can
+be addressed to the actual Docker host bridge rather than the container DHCP
+socket. Merely substituting an unassigned dummy identifier does not provide a
+reachable unicast server either. Broadcast reacquisition and T1 unicast renewal
+are different paths (RFC 2131 sections 4.3.2 and 4.4.5). A hosted recovery timeout
+without post-enable guest state is insufficient evidence to blame this path;
+retain the diagnostics and distinguish it from console-command completion.
+
 Docker stop/start must recreate the private network namespace: the entrypoint
 requires fresh single-`eth0` topology, then creates `qemubr0`. It intentionally
 does not delete or reuse an unexpected existing bridge; such topology fails

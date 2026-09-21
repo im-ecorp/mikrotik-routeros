@@ -7,6 +7,7 @@ Passwords and raw serial exchanges never enter logs, argv, or evidence.
 import argparse
 import hashlib
 import importlib.util
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -96,6 +97,14 @@ class Serial(SMOKE.VM):
         super().login(password, fresh)
         self.capture = False
         self.transcript = ''
+
+    def command_done(self, command):
+        # RouterOS redraws prompts while echoing input. A prompt alone can be
+        # stale, allowing logout/proxy termination before the command executes.
+        tag = 'IT_DONE_' + secrets.token_hex(8)
+        self.send(f'{command}; :put "{tag}"')
+        self.expect([rf'^{tag}\n'], 'tagged command completion')
+        self.expect([SMOKE.PROMPT], 'tagged command prompt')
 
     def __exit__(self, *_):
         # Do not log any serial text (including command echoes).
@@ -191,10 +200,98 @@ class Lab:
             time.sleep(1)
         raise RuntimeError('Timed out: ' + label)
 
+    def health_diagnostics(self, expected):
+        # Never retain health Output, full inspect, QMP extras or raw logs.
+        record = {'expected': expected}
+        self.report.setdefault('health_diagnostics', []).append(record)
+        try:
+            state = self.inspect()['State']
+            health = state.get('Health', {})
+            record.update(container_running=state.get('Running'),
+                          container_exit_code=state.get('ExitCode'),
+                          docker_health=health.get('Status'),
+                          failing_streak=health.get('FailingStreak'),
+                          health_exit_codes=[row.get('ExitCode') for row in health.get('Log', [])])
+        except Exception as error:
+            record['inspect_error'] = type(error).__name__
+        for action in ('qmp', 'health'):
+            try:
+                args = ('query-status',) if action == 'qmp' else ()
+                result = self.docker('exec', self.name, 'python3', '/routeros/bin/runtime.py',
+                                     action, *args, timeout=10, check=False)
+                if action == 'qmp':
+                    record['qmp_exit_code'] = result.returncode
+                    if result.returncode == 0:
+                        status = json.loads(result.stdout).get('status')
+                        allowed = ('running', 'paused', 'prelaunch', 'shutdown', 'inmigrate',
+                                   'internal-error', 'io-error', 'postmigrate', 'finish-migrate',
+                                   'restore-vm', 'save-vm', 'suspended', 'watchdog', 'guest-panicked')
+                        record['qmp_status'] = status if status in allowed else 'unknown'
+                else:
+                    record['probe_exit_code'] = result.returncode
+            except Exception as error:
+                record[action + '_error'] = type(error).__name__
+
     def health(self, expected):
-        self.wait(lambda: self.inspect()['State'].get('Health', {}).get('Status') == expected,
-                  'Docker health ' + expected, timeout=160 if expected == 'healthy' else 40)
+        try:
+            self.wait(lambda: self.inspect()['State'].get('Health', {}).get('Status') == expected,
+                      'Docker health ' + expected, timeout=160 if expected == 'healthy' else 40)
+        except Exception:
+            self.health_diagnostics(expected)
+            raise
         self.report['checks'].append({'health': expected})
+
+    def dhcp_diagnostics(self, console, phase):
+        record = {'phase': phase, 'address': None}
+        self.report.setdefault('dhcp_diagnostics', []).append(record)
+        try:
+            # Limit post-failure console diagnostics; preserve the primary error.
+            old_timeout = console.timeout
+            console.timeout = 10
+            try:
+                tag = 'IT_DHCP_' + secrets.token_hex(8)
+                query = '/ip dhcp-client get [find interface=ether1] '
+                disabled = console.value(tag + '_DISABLED', query + 'disabled')
+                require(disabled in ('true', 'false'), 'Invalid DHCP disabled readback')
+                record['disabled'] = disabled == 'true'
+                status = console.value(tag + '_STATUS', query + 'status')
+                allowed = ('bound', 'searching', 'requesting', 'rebinding', 'renewing',
+                           'stopped', 'error', 'selecting', 'searching...',
+                           'requesting...', 'rebinding...', 'renewing...', 'selecting...')
+                record['status'] = status if status in allowed else 'unknown'
+                # Unbound clients can lack the address property. Avoid a failing
+                # RouterOS getter (and do not mistake its echo for a value).
+                if status in ('bound', 'renewing', 'rebinding'):
+                    address = console.value(tag + '_ADDRESS', query + 'address')
+                    record['address'] = str(ipaddress.IPv4Interface(address))
+            finally:
+                console.timeout = old_timeout
+        except Exception as error:
+            record['error'] = type(error).__name__
+        return record
+
+    def address_health_transition(self):
+        guest_ip = self.inspect()['NetworkSettings']['Networks'][self.network]['IPAddress']
+        with self.console() as console:
+            console.login(self.password, False)
+            try:
+                console.command_done('/ip dhcp-client disable [find interface=ether1]')
+                disabled = self.dhcp_diagnostics(console, 'disabled')
+                require(disabled.get('disabled') is True, 'DHCP disable was not confirmed')
+                self.health('unhealthy')
+                console.command_done('/ip dhcp-client enable [find interface=ether1]')
+                enabled = self.dhcp_diagnostics(console, 'reenabled')
+                require(enabled.get('disabled') is False, 'DHCP enable was not confirmed')
+                try:
+                    self.health('healthy')
+                finally:
+                    recovered = self.dhcp_diagnostics(console, 'recovery')
+                require(recovered.get('status') == 'bound' and
+                        (recovered.get('address') or '').split('/')[0] == guest_ip,
+                        'Recovered DHCP lease differs from Docker address')
+            finally:
+                console.send('/quit')
+        self.report['checks'].append({'arp_health_tracks_guest_address': True})
 
     def create(self):
         self.docker('run', '-d', '--name', self.name, '--label', 'routeros.integration='+self.name,
@@ -353,14 +450,7 @@ class Lab:
         self.protocols()
         self.verify_isolation()
         # QMP still says running: loss of the DHCP address must fail ARP health.
-        with self.console() as console:
-            console.login(self.password, False)
-            console.command_done('/ip dhcp-client disable [find interface=ether1]')
-            self.health('unhealthy')
-            console.command_done('/ip dhcp-client enable [find interface=ether1]')
-            console.send('/quit')
-        self.health('healthy')
-        self.report['checks'].append({'arp_health_tracks_guest_address': True})
+        self.address_health_transition()
         # Exercise loss of guest execution, not an irrelevant container service.
         self.docker('exec', self.name, 'python3', '/routeros/bin/runtime.py', 'qmp', 'stop')
         self.health('unhealthy')
