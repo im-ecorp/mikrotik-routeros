@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Load exact original snapshot, never create a new baseline
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           repository: im-ecorp/mikrotik-routeros
           run-id: 35607084875
