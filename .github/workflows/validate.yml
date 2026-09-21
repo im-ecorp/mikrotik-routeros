@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Docker Compose
-        uses: docker/setup-compose-action@v1
+        uses: docker/setup-compose-action@v2
         with:
           version: v5.5.1
       - name: Require Docker Compose and validate configuration
