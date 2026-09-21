@@ -267,7 +267,15 @@ Public aliases are the tested CHR seed version and its `v` alias:
 ```text
 hossein3piol/mikrotik-routeros:7.21.4
 ghcr.io/im-ecorp/mikrotik-routeros:7.21.4
-# Both registries also publish v7.21.4 and sha-<full-source-SHA>.
+# Both registries also publish the v7.21.4 alias.
+```
+
+Publication creates no `sha-<commit>` tag. The source commit travels inside the
+image as the standard OCI label, so the tag list stays readable:
+
+```bash
+docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+  hossein3piol/mikrotik-routeros:7.21.4
 ```
 
 Existing CHR aliases require the explicit `approve_version_overwrite=true`

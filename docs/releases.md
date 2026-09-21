@@ -11,7 +11,9 @@ ghcr.io/im-ecorp/mikrotik-routeros:7.21.4
 
 These aliases identify the bundled **RouterOS CHR seed**, used only to initialize a new persistent disk. Replacing a container does **not** upgrade an existing guest. Check the running RouterOS version separately. Compose and `.env.example` default to `7.21.4`.
 
-CHR version aliases may receive tested container/runtime fixes **only with explicit overwrite approval**. Use the recorded `@sha256:...` index digest for immutable deployments. `sha-<full 40-character source SHA>` is an immutable source tag: the normal publisher refuses it if it already exists in either registry, even with alias overwrite approval.
+CHR version aliases may receive tested container/runtime fixes **only with explicit overwrite approval**. Use the recorded `@sha256:...` index digest for immutable deployments.
+
+Publication no longer creates a `sha-<full 40-character source SHA>` tag. That tag only duplicated `org.opencontainers.image.revision`, which is built into the image and readable with `docker inspect`, while adding a permanent unreadable entry to every public tag list. Historical `sha-` tags already in the registries are still **preserved and verified unchanged** by the recovery path; nothing is deleted. The separate candidate tag `sha-<source SHA>-chr-<seed>` is unrelated and still required — it is the staging handle the matrix publisher qualifies before promoting aliases.
 
 The default-seed publisher and bounded recovery never write `latest`. The separately authorized **current website matrix** below may promote `latest` to qualified `7.24.4` only after all 17 versions pass. No publisher deletes images or creates new `-r` suffix tags. The existing Docker Hub `7.21.4-r1.0.0` reference is preserved read-only; it is not a new public versioning scheme and must not be newly published to GHCR. Previous documentation described suffix-tag publication and untouched CHR aliases. That policy is superseded by this explicitly approved CHR-only policy.
 

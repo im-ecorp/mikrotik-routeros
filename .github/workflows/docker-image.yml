@@ -46,7 +46,6 @@ jobs:
       actions: read
     outputs:
       image_tag: ${{ steps.policy.outputs.image_tag }}
-      sha_tag: ${{ steps.policy.outputs.sha_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,7 +67,7 @@ jobs:
               tags = validate_inputs(os.environ['RELEASE_VERSION'], os.environ['ROUTEROS_VERSION'],
                                      os.environ['SOURCE_REF'], os.environ['SOURCE_SHA'], tested_seed)
               with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-                  output.write(f'image_tag={tags[0]}\nsha_tag={tags[2]}\n')
+                  output.write(f'image_tag={tags[0]}\n')
           # END RELEASE POLICY
       - name: Require successful main CI on this exact source SHA
         env:
@@ -108,7 +107,6 @@ jobs:
       packages: write
     env:
       IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
-      SHA_TAG: ${{ needs.validate.outputs.sha_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -151,10 +149,8 @@ jobs:
           tags: |
             ${{ env.DOCKERHUB_IMAGE }}:${{ env.IMAGE_TAG }}
             ${{ env.DOCKERHUB_IMAGE }}:v${{ env.IMAGE_TAG }}
-            ${{ env.DOCKERHUB_IMAGE }}:${{ env.SHA_TAG }}
             ${{ env.GHCR_IMAGE }}:${{ env.IMAGE_TAG }}
             ${{ env.GHCR_IMAGE }}:v${{ env.IMAGE_TAG }}
-            ${{ env.GHCR_IMAGE }}:${{ env.SHA_TAG }}
       - name: Read back every published reference and unchanged latest
         env:
           EXPECTED_DIGEST: ${{ steps.build.outputs.digest }}
