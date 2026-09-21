@@ -115,7 +115,7 @@ jobs:
       - uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Check immutable SHA and approved CHR aliases
         env:
           HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
