@@ -159,6 +159,28 @@ class RecoveryRegistry(MatrixRegistry):
             self.content[key] = raw
         return expected, copy.deepcopy(self.manifests[key])
 
+    def resolve(self, image, tag):
+        """Tag -> digest from a fresh HEAD alone, for read-only drift comparison.
+
+        A 404 here means 'not observed', NOT proven absence: only a GET returns the
+        MANIFEST_UNKNOWN body that distinguishes a missing manifest from any other
+        404. Absence is what authorizes a write, so a caller that may write to this
+        reference must use manifest() instead and pay for the proof.
+        """
+        if not re.fullmatch(r'(?:sha256:[0-9a-f]{64}|[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})', tag):
+            raise self.error('manifest', 'invalid_reference', image)
+        if tag.startswith('sha256:'):
+            return tag
+        status, _, headers = self.request(image, 'manifests/' + tag, method='HEAD')
+        if status == 404:
+            return None
+        if status != 200:
+            raise self.error('manifest', http_reason(status), image, status)
+        digest = headers.get('Docker-Content-Digest')
+        if not isinstance(digest, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+            raise self.error('manifest', 'digest_mismatch', image, status)
+        return digest
+
     def export_content(self):
         """Digest-keyed immutable bytes only; tag bindings are deliberately never shared."""
         return {'schema': CONTENT_SCHEMA,

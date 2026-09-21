@@ -149,6 +149,92 @@ class BudgetTests(unittest.TestCase):
                         'shared content must leave only absent references billable')
 
 
+class WriteScopeTests(unittest.TestCase):
+    """Absence authorizes a write, so it is GET-proven exactly where a write can follow."""
+
+    def preflight(self, shared=None, scope=None):
+        wire, data, snapshot, originals, _ = fixture()
+        registry = recovery_registry()(CREDENTIALS, fetch=wire)
+        if shared:
+            registry.import_content(shared)
+        recovery.preflight(registry, data, snapshot, originals, recovery.HARNESS_SHA256, {},
+                           write_scope=scope)
+        billable = [(image, ref) for image, method, kind, ref in wire.calls
+                    if method == 'GET' and kind == 'manifests']
+        return wire, registry, billable
+
+    def test_scoped_job_pays_only_for_its_own_destinations(self):
+        _, registry, _ = self.preflight()
+        shared = registry.export_content()
+        version = '7.24.4'
+        _, _, billable = self.preflight(shared, {version})
+        self.assertTrue(billable, 'the job must still prove its own destinations')
+        for _, ref in billable:
+            self.assertIn(version, ref)
+        hub = [ref for image, ref in billable if image == matrix.HUB]
+        self.assertEqual(sorted(hub), [version, 'v' + version])
+
+    def test_every_failed_version_is_still_proven_by_its_own_job(self):
+        """Scoping removes redundancy, not coverage."""
+        _, registry, _ = self.preflight()
+        shared = registry.export_content()
+        proven = set()
+        for version in recovery.FAILED_VERSIONS:
+            _, _, billable = self.preflight(shared, {version})
+            proven.update(billable)
+        for version in recovery.FAILED_VERSIONS:
+            for image in (matrix.HUB, matrix.GHCR):
+                for alias in (version, 'v' + version):
+                    self.assertIn((image, alias), proven,
+                                  f'{image}:{alias} lost its absence proof')
+
+    def test_unscoped_preflight_still_proves_all_seventeen(self):
+        _, registry, _ = self.preflight()
+        shared = registry.export_content()
+        _, _, scoped = self.preflight(shared, {'7.24.4'})
+        _, _, full = self.preflight(shared, None)
+        self.assertLess(len(scoped), len(full))
+        for version in recovery.FAILED_VERSIONS:
+            self.assertIn((matrix.HUB, version), full)
+
+    def test_resolve_reports_a_binding_but_never_proves_absence(self):
+        wire, _, _ = self.preflight()
+        registry = recovery_registry()(CREDENTIALS, fetch=wire)
+        wire.calls.clear()
+        absent = 'v' + recovery.FAILED_VERSIONS[0]
+        self.assertIsNone(registry.resolve(matrix.HUB, absent))
+        # A HEAD alone answered it: no billable GET was spent on the 404.
+        self.assertFalse([c for c in wire.calls if c[1] == 'GET' and c[2] == 'manifests'])
+        present = '6.49.17'
+        self.assertEqual(registry.resolve(matrix.HUB, present), wire.tags[matrix.HUB, present])
+
+    def test_resolve_refuses_bad_references_and_uncertain_status(self):
+        wire, _, _ = self.preflight()
+        registry = recovery_registry()(CREDENTIALS, fetch=wire)
+        with self.assertRaises(ValueError):
+            registry.resolve(matrix.HUB, 'bad/reference')
+        wire.overrides[matrix.HUB, 'HEAD', 'manifests', 'latest'] = (500, b'', {})
+        with self.assertRaises(ValueError):
+            registry.resolve(matrix.HUB, 'latest')
+        wire.overrides[matrix.HUB, 'HEAD', 'manifests', 'latest'] = (200, b'', {})
+        with self.assertRaises(ValueError):
+            registry.resolve(matrix.HUB, 'latest')
+
+    def test_write_path_never_authorizes_from_a_head_only_binding(self):
+        """Guard the invariant directly: everything that can write uses manifest()."""
+        source = Path(__file__).resolve().parents[1] / 'scripts'
+        for name in ('chr_matrix.py', 'chr_recovery.py'):
+            text = (source / name).read_text()
+            if name == 'chr_recovery.py':
+                # The only resolve() call site is the read-only comparison in preflight.
+                text = text.split('def preflight', 1)[1].split('\ndef ', 1)[0]
+                self.assertIn('registry.resolve(', text)
+            else:
+                self.assertNotIn('.resolve(', text)
+        writes = (source / 'chr_matrix.py').read_text()
+        self.assertIn('registry.manifest(image, tag)[0] != expected', writes)
+
+
 class SharedContentTests(unittest.TestCase):
     def setUp(self):
         self.wire, self.data, self.snapshot, self.originals, self.digests = fixture()

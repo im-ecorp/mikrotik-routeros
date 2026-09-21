@@ -76,11 +76,28 @@ Measured over the offline budget fixture, one full recovery run
 | --- | --- |
 | before | 1053 |
 | digest cache only | 603 |
-| digest cache + shared content | **179** |
+| digest cache + shared content | 179 |
+| + scoped absence proof | **95** |
 
-The residual per-consumer cost is 14 Hub reads, all of them 404 disambiguation:
-a `HEAD` alone cannot prove `MANIFEST_UNKNOWN`, and absence is never cached
-because absence is what authorizes a write.
+### Scoped absence proof
+
+A `HEAD` alone cannot prove `MANIFEST_UNKNOWN`, so absence still costs a `GET`,
+and absence is never cached — absence is what authorizes a write.
+
+Each job therefore GET-proves absence only for the destinations it may write:
+a variant job covers its own version, while the preflight and aggregate jobs
+cover all seventeen. Every other destination is compared from a fresh `HEAD`.
+
+This removes redundancy, not coverage. Each of the seven failed versions is still
+GET-proven three times — by the preflight job, by its own variant job immediately
+before its writes, and by the aggregate job before `latest` moves — instead of
+nine times by every job in the run. The write path in `publish_version` re-proves
+each target with `manifest()` immediately before copying regardless, and
+`chr-image-publication` concurrency already serialises publication, so external
+drift still fails the run.
+
+`RecoveryRegistry.resolve()` is the read-only half of that split and is
+deliberately unavailable to the write path.
 
 Only `recovery-output/report.json` and `recovery-output/registry-content.json` are uploaded. Registry errors, bounded command
 failures and runtime failure codes come from the instrumented executor. Raw
