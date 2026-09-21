@@ -480,6 +480,20 @@ class DiagnosticTests(unittest.TestCase):
         self.assertNotIn('SECRET', json.dumps(diagnostic))
         self.assertEqual(wire.counts(), {'hub:GET:token': 1, 'hub:HEAD:manifests': 1})
 
+    def test_exhausted_budget_is_pull_quota_in_any_advertised_window(self):
+        """Docker Hub served w=3600 when measured live; the window must not be assumed."""
+        from scripts.chr_registry import quota_diagnostic
+        for window in (3600, 21600, 60, 86400):
+            with self.subTest(window=window):
+                self.assertEqual(quota_diagnostic(b'', {
+                    'ratelimit-limit': f'100;w={window}',
+                    'ratelimit-remaining': f'0;w={window}'})['classification'], 'pull_quota')
+        # Headroom left, or no window advertised, is not an exhausted budget.
+        self.assertEqual(quota_diagnostic(b'', {
+            'ratelimit-remaining': '17;w=3600'})['classification'], 'unknown')
+        self.assertEqual(quota_diagnostic(b'', {
+            'ratelimit-remaining': '0'})['classification'], 'unknown')
+
 
 if __name__ == '__main__':
     unittest.main()

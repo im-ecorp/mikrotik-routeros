@@ -85,7 +85,11 @@ def quota_diagnostic(body, headers):
             result['classification'] = 'pull_quota'
         elif messages[0] == 'Too Many Requests':
             result['classification'] = 'abuse'
-    if result.get('remaining') == 0 and result.get('remaining_window_seconds') == 21600:
+    # An exhausted pull budget is 'remaining 0' in whatever window the registry
+    # advertises. Measured live 2026-09-22: Docker Hub served w=3600 here, not the
+    # w=21600 this once hard-coded, which would have left a real quota stall
+    # classified 'unknown'. Any positive window counts.
+    if result.get('remaining') == 0 and result.get('remaining_window_seconds', 0) > 0:
         result['classification'] = 'pull_quota'
     return result
 

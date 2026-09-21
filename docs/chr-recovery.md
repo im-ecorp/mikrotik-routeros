@@ -52,7 +52,19 @@ The unchanged seventeen-report qualification gate still follows these checks.
 
 Docker Hub counts a pull as a `GET` on `/v2/*/manifests/*`; manifest `HEAD`
 requests are exempt, which is why the documented way to read your own remaining
-quota is a `HEAD`. Every job therefore resolves tags with `HEAD` and keeps a
+quota is a `HEAD`. Measured directly against `registry-1.docker.io` on
+2026-09-22 with a single token:
+
+| request | `ratelimit-remaining` |
+| --- | --- |
+| `HEAD` x3 | 100, 100, 100 |
+| first `GET` | 99 |
+| second `GET` | 99 |
+| `HEAD` after | 99 |
+
+`HEAD` never decrements, `GET` does, and two `GET`s on one manifest cost a single
+pull. The advertised window was `w=3600`, so no code may assume a particular
+window length. Every job therefore resolves tags with `HEAD` and keeps a
 digest-keyed cache of the bytes it has already verified.
 
 The preflight job additionally uploads `registry-content.json`
