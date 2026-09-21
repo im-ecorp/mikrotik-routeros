@@ -30,9 +30,9 @@ Because QEMU handles the x86_64 emulation layer, the Docker image itself is buil
 | **Host ↔ Guest File Sharing** | A local directory is exposed inside MikroTik's File Manager as a virtual FAT drive |
 | **Safe SSH Access** | MikroTik SSH is remapped to port `2222` — your host SSH on port `22` is untouched |
 | **Dynamic Port Range** | Ports `9000–9100` are pre-allocated for custom services — no Compose restarts needed |
-| **Version Pinning** | Switch RouterOS versions via a single environment variable |
+| **Version Pinning** | Pin the container and factory seed version; upgrade existing guests inside RouterOS |
 | **KVM Acceleration** | Hardware virtualization is enabled automatically when `/dev/kvm` is available, with graceful fallback to software emulation |
-| **Graceful Shutdown** | SIGTERM is caught and forwarded to QEMU — MikroTik shuts down cleanly on `docker compose down` |
+| **Shutdown Handling** | SIGTERM is forwarded to QEMU; shut down RouterOS first for offline backups |
 
 ---
 
@@ -135,6 +135,7 @@ Regardless of the host CPU architecture, QEMU always emulates an x86_64 machine 
 .
 ├── bin/
 │   ├── entrypoint.sh          # Container entrypoint & QEMU launcher
+│   ├── init-disk.py           # Stable disk selection & legacy migration
 │   ├── generate-dhcpd-conf.py # Dynamic DHCP config generator
 │   ├── qemu-ifup              # TAP interface bring-up script
 │   └── qemu-ifdown            # TAP interface teardown script
@@ -155,7 +156,7 @@ Regardless of the host CPU architecture, QEMU always emulates an x86_64 machine 
 | `./data` | `/routeros/data` | Stores the persistent virtual hard drive (`chr.vdi`) |
 | `./shared` | `/routeros/shared` | Exposed to MikroTik as a virtual FAT drive |
 
-> **Important:** Never delete `./data` unless you intend to reset the router to factory defaults. Never run `docker compose down -v`.
+> **Important:** Preserve `./data` and back it up while the guest is stopped. A single legacy `chr-*.vdi` is copied to `chr.vdi` without changing the original; multiple legacy disks require explicit selection. See [safe upgrades and recovery](docs/upgrades.md). The provided mounts are bind mounts, so `docker compose down -v` does not remove these host directories, but it is not an upgrade or reset procedure.
 
 ---
 
@@ -183,16 +184,16 @@ Regardless of the host CPU architecture, QEMU always emulates an x86_64 machine 
 
 ## Configuration
 
-### Changing the RouterOS Version
+### Container Updates and RouterOS Upgrades
 
-Update `ROUTEROS_VERSION` in your `.env` file, then recreate the container:
+`ROUTEROS_VERSION` selects the container image and its factory seed. Existing
+routers always reuse `./data/chr.vdi`; changing a tag does **not** upgrade or
+downgrade the guest OS. Upgrade RouterOS through its own package manager.
 
-```sh
-docker compose down
-docker compose up -d
-```
-
-> The existing `chr.vdi` in `./data` will be reused. To start fresh with the new version's default config, delete `./data/chr-*.vdi` before starting.
+Before changing either layer, shut down the guest and create a verified offline
+backup. Follow [safe upgrades, legacy-disk migration, and rollback](docs/upgrades.md)
+for the complete procedure. These behaviors require an image built with the new
+disk initializer; updating this checkout alone does not update a running image.
 
 ### Changing the Timezone
 
@@ -206,7 +207,9 @@ TZ=Europe/Berlin
 docker compose down
 ```
 
-Your configuration is safely stored in `./data` and will persist for the next startup.
+Your configuration is stored in `./data` for the next startup. For a clean offline
+backup, shut down RouterOS inside the guest before stopping the service; see the
+[backup procedure](docs/upgrades.md#1-make-an-offline-backup-before-any-change).
 
 ---
 
@@ -323,9 +326,13 @@ This step is critical for client internet access. Add a masquerade rule under **
 - Confirm the container is running: `docker compose ps`
 - The healthcheck polls port `8291` — wait until status shows `healthy`
 
-**MikroTik lost its configuration after restart**
-- Ensure `./data` directory exists and is writable by the container
-- Never use `docker compose down -v`
+**MikroTik lost its configuration after restart or a tag change**
+- Verify the same `./data` directory is mounted.
+- Do not delete or replace any disks. Older images selected versioned filenames.
+- If several legacy disks exist, startup intentionally refuses to guess. Follow
+  [legacy-disk selection and recovery](docs/upgrades.md#2-resolve-multiple-legacy-disks-if-necessary).
+- Existing `chr.vdi` takes priority over all legacy files. A preserved legacy file
+  does not receive subsequent guest writes.
 
 **SSH connection refused**
 - MikroTik SSH is on port `2222`, not `22`
