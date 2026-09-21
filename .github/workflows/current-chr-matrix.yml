@@ -62,7 +62,7 @@ jobs:
         run: python3 scripts/chr_matrix.py prepare
       - name: Keep the original snapshot immutable within this run
         if: always() && github.run_attempt == 1
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chr-matrix-snapshot
           path: matrix-snapshot/snapshot.json
@@ -78,7 +78,7 @@ jobs:
           p.parent.mkdir(parents=True, exist_ok=True)
           if not p.exists():
               p.write_text(json.dumps({'status': 'failed', 'stage': 'prepare-prerequisites'}))
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chr-matrix-prepare-${{ github.run_attempt }}
@@ -149,7 +149,7 @@ jobs:
           if not p.exists():
               p.write_text(json.dumps({'status': 'failed', 'version': os.environ['CHR_VERSION'],
                                        'stage': 'variant-prerequisites'}))
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chr-matrix-version-${{ matrix.version }}
@@ -204,7 +204,7 @@ jobs:
           p.parent.mkdir(parents=True, exist_ok=True)
           if not p.exists():
               p.write_text(json.dumps({'status': 'failed', 'stage': 'aggregate-prerequisites'}))
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chr-matrix-aggregate-${{ github.run_attempt }}
