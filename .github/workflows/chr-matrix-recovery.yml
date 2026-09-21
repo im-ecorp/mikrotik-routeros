@@ -80,7 +80,7 @@ jobs:
           p.parent.mkdir(parents=True, exist_ok=True)
           if not p.exists():
               p.write_text(json.dumps({'status': 'failed', 'stage': 'preflight-prerequisites'}))
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chr-recovery-preflight-${{ github.run_attempt }}
@@ -89,7 +89,7 @@ jobs:
           if-no-files-found: error
       # Digest-addressed manifest bytes only. Consumers re-hash every entry and
       # still resolve each tag live, so this cannot decide what a tag points at.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: chr-recovery-content-${{ github.run_attempt }}
           path: recovery-output/registry-content.json
@@ -185,7 +185,7 @@ jobs:
               p.write_text(json.dumps({'status': 'failed', 'stage': 'variant-prerequisites',
                   'version': os.environ['CHR_VERSION'], 'source_sha': ORIGINAL_SOURCE_SHA,
                   'run_id': ORIGINAL_RUN_ID, 'recovery': identity()}))
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chr-recovery-version-${{ matrix.version }}-${{ github.run_attempt }}
@@ -262,7 +262,7 @@ jobs:
           p.parent.mkdir(parents=True, exist_ok=True)
           if not p.exists():
               p.write_text(json.dumps({'status': 'failed', 'stage': 'aggregate-prerequisites'}))
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chr-recovery-aggregate-${{ github.run_attempt }}

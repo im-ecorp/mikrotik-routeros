@@ -43,7 +43,7 @@ jobs:
             --image "$IMAGE" --output-dir "$EVIDENCE"
       - name: Preserve sanitized validation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: routeros-runtime-${{ github.run_id }}
           path: ${{ env.EVIDENCE }}

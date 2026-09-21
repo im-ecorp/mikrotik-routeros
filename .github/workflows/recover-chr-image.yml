@@ -47,7 +47,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TMPDIR: ${{ runner.temp }}
         run: python3 scripts/image_release.py recover
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: recovery-manifest

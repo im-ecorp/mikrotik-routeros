@@ -54,7 +54,7 @@ jobs:
           if not p.exists():
               p.write_text(json.dumps({'status': 'failed', 'mode': 'read_only',
                   'failure': {'stage': 'diagnostic_prerequisites', 'reason': 'step_incomplete'}}))
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chr-matrix-diagnostic-${{ github.run_attempt }}
