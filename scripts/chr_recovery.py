@@ -10,9 +10,11 @@ import subprocess
 
 try:
     from scripts import chr_matrix as matrix
+    from scripts.chr_registry import RecoveryRegistry
     from scripts.chr_diagnostics import ORIGINAL_RUN_ID, ORIGINAL_SOURCE_SHA, SNAPSHOT_SHA256
 except ModuleNotFoundError:
     import chr_matrix as matrix
+    from chr_registry import RecoveryRegistry
     from chr_diagnostics import ORIGINAL_RUN_ID, ORIGINAL_SOURCE_SHA, SNAPSHOT_SHA256
 
 FAILED_VERSIONS = ('6.49.21', '6.49.22', '7.23.5', '7.24.2', '7.24.3', '7.24.4', '7.25beta5')
@@ -292,7 +294,7 @@ def main(argv=None):
                 raise ValueError('Version is outside the seven-version recovery scope')
             report['version'] = version
         data, snapshot, originals, harness_hash = load_inputs(source, args.snapshot, args.originals, report)
-        registry = matrix.MatrixRegistry()
+        registry = RecoveryRegistry()
         preflight(registry, data, snapshot, originals, harness_hash, report)
         if args.command == 'preflight':
             report.update(status='success', count=7)

@@ -211,7 +211,7 @@ class RecoveryTests(unittest.TestCase):
             with patch.dict(os.environ, env, clear=True), \
                     patch.object(recovery, 'load_inputs', return_value=(fixture.data, snapshot, originals, 'b' * 64)), \
                     patch.object(recovery, 'source_identity', return_value='b' * 64), \
-                    patch.object(matrix, 'MatrixRegistry', return_value=registry), \
+                    patch.object(recovery, 'RecoveryRegistry', return_value=registry), \
                     patch.object(matrix, 'MatrixCopy', Copier), patch.object(matrix, 'run_command', run):
                 argv = [command, '--source-tree', str(source), '--output-dir', str(root / 'out')]
                 result = recovery.main(argv)
@@ -395,7 +395,7 @@ class RecoveryTests(unittest.TestCase):
                 output = root / f'out-{index}'
                 with patch.dict(os.environ, env, clear=True), \
                         patch.object(recovery, 'load_inputs', return_value=(fixture.data, snapshot, originals, 'b' * 64)), \
-                        patch.object(matrix, 'MatrixRegistry', return_value=registry), \
+                        patch.object(recovery, 'RecoveryRegistry', return_value=registry), \
                         patch('subprocess.run', return_value=self.jobs_response(jobs), side_effect=error), \
                         patch.object(matrix, 'MatrixCopy') as copier:
                     self.assertEqual(recovery.main(['aggregate', '--reports', str(root), '--output-dir', str(output)]), 1)
@@ -481,7 +481,7 @@ class RecoveryTests(unittest.TestCase):
         error = RegistryError('token', 'forbidden', matrix.HUB, 403)
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, env, clear=True), \
                 patch.object(recovery, 'load_inputs', return_value=(fixture.data, snapshot, originals, 'b' * 64)), \
-                patch.object(matrix, 'MatrixRegistry', return_value=registry), \
+                patch.object(recovery, 'RecoveryRegistry', return_value=registry), \
                 patch.object(registry, 'manifest', side_effect=error), \
                 patch.object(matrix, 'MatrixCopy', side_effect=AssertionError('no login')):
             output = Path(directory) / 'out'
