@@ -1,6 +1,9 @@
 """Recovery-only read budget: fresh tag HEADs, byte-verified immutable content."""
+import base64
+import binascii
 import copy
 from email.utils import parsedate_to_datetime
+import hashlib
 import json
 import re
 import urllib.error
@@ -8,10 +11,13 @@ import urllib.request
 
 try:
     from scripts.chr_matrix import MatrixRegistry
-    from scripts.image_release import SafeRedirect, http_reason
+    from scripts.image_release import GHCR, HUB, SafeRedirect, decode_manifest, http_reason
 except ModuleNotFoundError:
     from chr_matrix import MatrixRegistry
-    from image_release import SafeRedirect, http_reason
+    from image_release import GHCR, HUB, SafeRedirect, decode_manifest, http_reason
+
+# Bump when the shared-content wire format changes; consumers refuse other values.
+CONTENT_SCHEMA = 1
 
 
 class ReadRedirect(SafeRedirect):
@@ -88,7 +94,9 @@ class RecoveryRegistry(MatrixRegistry):
     def __init__(self, credentials=None, *, fetch=fetch):
         super().__init__(credentials, fetch=fetch)
         self.manifests = {}
+        self.content = {}
         self._read_method = 'GET'
+        self._body = None
 
     def read(self, url, headers, operation, image):
         method = 'GET' if operation == 'token' else self._read_method
@@ -103,6 +111,9 @@ class RecoveryRegistry(MatrixRegistry):
             error.diagnostic['quota'] = quota_diagnostic(body, response_headers)
             # Stop immediately, including token responses. No 429 retries or probe GET.
             raise error
+        if operation == 'manifest' and method == 'GET' and status == 200:
+            # Retain the exact transported bytes; the digest is proven against these.
+            self._body = body
         return status, body, response_headers
 
     def request(self, image, path, *, method='GET'):
@@ -137,8 +148,47 @@ class RecoveryRegistry(MatrixRegistry):
                 raise self.error('manifest', 'digest_mismatch', image, status)
         key = (image, expected)
         if key not in self.manifests:
+            self._body = None
             actual, manifest = super().manifest(image, tag)
-            if actual != expected:
+            raw, self._body = self._body, None
+            # Cache only bytes this process saw and re-hashed to the resolved digest.
+            if (actual != expected or not isinstance(raw, bytes) or
+                    'sha256:' + hashlib.sha256(raw).hexdigest() != expected):
                 raise self.error('manifest', 'digest_mismatch', image)
             self.manifests[key] = manifest
+            self.content[key] = raw
         return expected, copy.deepcopy(self.manifests[key])
+
+    def export_content(self):
+        """Digest-keyed immutable bytes only; tag bindings are deliberately never shared."""
+        return {'schema': CONTENT_SCHEMA,
+                'content': {f'{image}|{digest}': base64.b64encode(raw).decode()
+                            for (image, digest), raw in sorted(self.content.items())}}
+
+    def import_content(self, data):
+        """Trust nothing: accept bytes only when they hash to the digest that keys them."""
+        if not isinstance(data, dict) or data.get('schema') != CONTENT_SCHEMA:
+            raise ValueError('Unsupported shared registry content schema')
+        entries = data.get('content')
+        if not isinstance(entries, dict):
+            raise ValueError('Shared registry content is missing')
+        for key, encoded in entries.items():
+            if not isinstance(key, str) or not isinstance(encoded, str):
+                raise ValueError('Shared registry content is malformed')
+            image, separator, digest = key.partition('|')
+            if (not separator or image not in (HUB, GHCR) or
+                    not re.fullmatch(r'sha256:[0-9a-f]{64}', digest)):
+                raise ValueError('Shared registry content is outside the approved scope')
+            try:
+                raw = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError):
+                raise ValueError('Shared registry content is not valid base64') from None
+            if 'sha256:' + hashlib.sha256(raw).hexdigest() != digest:
+                raise ValueError('Shared registry content does not match its digest')
+            # Reuse the production decoder so a shared blob cannot relax manifest schema rules.
+            actual, manifest = decode_manifest(200, raw, digest)
+            if actual != digest or manifest is None:
+                raise ValueError('Shared registry content is not a valid manifest')
+            self.manifests[image, digest] = manifest
+            self.content[image, digest] = raw
+        return len(entries)

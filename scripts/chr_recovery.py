@@ -121,6 +121,33 @@ def preflight(registry, data, snapshot, originals, harness_hash, report):
             raise ValueError('Target drifted from the original dispatch snapshot')
     report.update(reused_versions=sorted(qualified), original_readbacks=readbacks)
 
+SHARED_CONTENT_NAME = 'registry-content.json'
+
+
+def import_shared_content(registry, path):
+    """Immutable content may cross jobs; every tag binding is still re-read live."""
+    if path is None:
+        return {'imported': False, 'reason': 'not_requested', 'entries': 0}
+    path = Path(path)
+    if not path.is_file():
+        # Reruns can outlive the producing attempt's artifact. Costs reads, not correctness.
+        return {'imported': False, 'reason': 'unavailable', 'entries': 0}
+    raw = path.read_bytes()
+    if len(raw) > 32 * 1024 * 1024:
+        raise ValueError('Shared registry content exceeds the accepted size')
+    entries = registry.import_content(json.loads(raw))
+    return {'imported': True, 'entries': entries,
+            'sha256': hashlib.sha256(raw).hexdigest()}
+
+
+def export_shared_content(registry, output):
+    """Publish only digest-addressed bytes so consumers can re-derive every hash."""
+    raw = (json.dumps(registry.export_content(), indent=2, sort_keys=True) + '\n').encode()
+    (output / SHARED_CONTENT_NAME).write_bytes(raw)
+    return {'entries': len(registry.content), 'sha256': hashlib.sha256(raw).hexdigest(),
+            'bytes': len(raw)}
+
+
 def identity():
     executor = os.environ.get('GITHUB_SHA', '')
     run = os.environ.get('GITHUB_RUN_ID', '')
@@ -272,6 +299,8 @@ def main(argv=None):
     parser.add_argument('--originals', type=Path, default=Path('original-reports'))
     parser.add_argument('--reports', type=Path, default=Path('recovery-reports'))
     parser.add_argument('--output-dir', type=Path, default=Path('recovery-output'))
+    parser.add_argument('--shared-content', type=Path, default=None,
+                        help='Digest-verified manifest bytes from the preflight job')
     args = parser.parse_args(argv)
     # A repeated invocation must never erase its predecessor's evidence.
     try:
@@ -295,8 +324,12 @@ def main(argv=None):
             report['version'] = version
         data, snapshot, originals, harness_hash = load_inputs(source, args.snapshot, args.originals, report)
         registry = RecoveryRegistry()
+        report['stage'] = 'shared_content_import'
+        report['shared_content'] = import_shared_content(registry, args.shared_content)
         preflight(registry, data, snapshot, originals, harness_hash, report)
         if args.command == 'preflight':
+            report['stage'] = 'shared_content_export'
+            report['shared_content_export'] = export_shared_content(registry, output)
             report.update(status='success', count=7)
         elif args.command == 'variant':
             row = next(r for r in data['versions'] if r['version'] == version)

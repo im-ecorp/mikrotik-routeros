@@ -110,7 +110,15 @@ class PublicationTests(QualificationTests):
         outer = self
         class Fake:
             def __init__(self):
-                self.tags = {}; self.rows = {}; self.copies = []
+                self.tags = {}; self.rows = {}; self.copies = []; self.content = {}
+            def export_content(self):
+                from scripts.chr_registry import CONTENT_SCHEMA
+                return {'schema': CONTENT_SCHEMA, 'content': {}}
+            def import_content(self, data):
+                from scripts.chr_registry import CONTENT_SCHEMA
+                if not isinstance(data, dict) or data.get('schema') != CONTENT_SCHEMA:
+                    raise ValueError('Unsupported shared registry content schema')
+                return len(data.get('content') or {})
             def manifest(self, image, tag):
                 digest = tag if tag.startswith('sha256:') and tag in self.rows else self.tags.get((image, tag))
                 return digest, ({'manifests': [{'digest': digest + '/' + arch, 'platform': {'os': 'linux', 'architecture': arch}}

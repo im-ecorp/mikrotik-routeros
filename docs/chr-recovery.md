@@ -48,7 +48,41 @@ API identity contract. Cross-run recovery-report reuse is unsupported. A repeate
 local invocation refuses an existing output directory rather than replacing evidence.
 The unchanged seventeen-report qualification gate still follows these checks.
 
-Only `recovery-output/report.json` is uploaded. Registry errors, bounded command
+### Shared registry content
+
+Docker Hub counts a pull as a `GET` on `/v2/*/manifests/*`; manifest `HEAD`
+requests are exempt, which is why the documented way to read your own remaining
+quota is a `HEAD`. Every job therefore resolves tags with `HEAD` and keeps a
+digest-keyed cache of the bytes it has already verified.
+
+The preflight job additionally uploads `registry-content.json`
+(`chr-recovery-content-<attempt>`): base64 manifest bytes keyed by
+`<repository>|sha256:<digest>`, and nothing else. Variant and aggregate jobs
+import it and re-hash every entry against the digest that keys it, refusing any
+mismatch, foreign repository, bad schema or non-manifest payload. **Tag bindings
+are deliberately never shared.** Each job still resolves every tag live with a
+fresh `HEAD`, so drift detection is exactly as strong as before; shared content
+only answers "what are the bytes behind this digest", which is immutable.
+
+Because entries are digest-addressed, any attempt's artifact is equally valid,
+and a missing one is not an error: the consumer download is `continue-on-error`
+and the job falls back to full reads. Shared content is a quota optimization and
+never an input to a correctness decision.
+
+Measured over the offline budget fixture, one full recovery run
+(1 preflight + 7 variants + 1 aggregate) costs on Docker Hub:
+
+| | manifest `GET` (billable) |
+| --- | --- |
+| before | 1053 |
+| digest cache only | 603 |
+| digest cache + shared content | **179** |
+
+The residual per-consumer cost is 14 Hub reads, all of them 404 disambiguation:
+a `HEAD` alone cannot prove `MANIFEST_UNKNOWN`, and absence is never cached
+because absence is what authorizes a write.
+
+Only `recovery-output/report.json` and `recovery-output/registry-content.json` are uploaded. Registry errors, bounded command
 failures and runtime failure codes come from the instrumented executor. Raw
 subprocess output, private runtime directories, disks, auth and exception strings
 are never uploaded. Original runtime gates are not relaxed; a genuine guest

@@ -1,4 +1,5 @@
 """Offline HTTP budget: real recovery policy over digest-valid synthetic bytes."""
+import base64
 import copy
 from collections import Counter
 import hashlib
@@ -125,6 +126,91 @@ class BudgetTests(unittest.TestCase):
             'hub:GET:token': 1, 'hub:GET:blobs': 34, 'hub:GET:manifests': 67,
             'hub:HEAD:manifests': 83, 'ghcr:GET:token': 1, 'ghcr:GET:blobs': 20,
             'ghcr:GET:manifests': 53, 'ghcr:HEAD:manifests': 76})
+
+    def test_shared_content_leaves_only_absence_proofs_billable(self):
+        """A variant job reusing preflight content pays for nothing but 404 disambiguation."""
+        wire, data, snapshot, originals, _ = fixture()
+        cold = recovery_registry()(CREDENTIALS, fetch=wire)
+        recovery.preflight(cold, data, snapshot, originals, recovery.HARNESS_SHA256, {})
+        shared = cold.export_content()
+        wire.calls.clear()
+        warm = recovery_registry()(CREDENTIALS, fetch=wire)
+        self.assertEqual(warm.import_content(shared), len(shared['content']))
+        recovery.preflight(warm, data, snapshot, originals, recovery.HARNESS_SHA256, {})
+        counts = wire.counts()
+        # HEAD volume is unchanged: every tag binding is still resolved live.
+        self.assertEqual(counts['hub:HEAD:manifests'], 83)
+        self.assertEqual(counts['ghcr:HEAD:manifests'], 76)
+        self.assertEqual(counts['hub:GET:manifests'], 14)
+        self.assertEqual(counts['ghcr:GET:manifests'], 21)
+        billable = [(image, ref) for image, method, kind, ref in wire.calls
+                    if method == 'GET' and kind == 'manifests']
+        self.assertTrue(all(wire.tags.get(key) is None for key in billable),
+                        'shared content must leave only absent references billable')
+
+
+class SharedContentTests(unittest.TestCase):
+    def setUp(self):
+        self.wire, self.data, self.snapshot, self.originals, self.digests = fixture()
+        self.registry = recovery_registry()(CREDENTIALS, fetch=self.wire)
+        self.image = matrix.HUB
+        self.tag = self.data['versions'][0]['version']
+        self.digest = self.digests[self.tag]
+        self.registry.manifest(self.image, self.tag)
+        self.shared = self.registry.export_content()
+
+    def consumer(self):
+        return recovery_registry()(CREDENTIALS, fetch=self.wire)
+
+    def test_exported_entries_are_digest_addressed_and_carry_no_tag_binding(self):
+        for key in self.shared['content']:
+            image, _, digest = key.partition('|')
+            self.assertIn(image, (matrix.HUB, matrix.GHCR))
+            self.assertRegex(digest, r'^sha256:[0-9a-f]{64}$')
+        self.assertNotIn(self.tag, json.dumps(self.shared))
+
+    def test_imported_content_is_used_without_any_get(self):
+        warm = self.consumer()
+        warm.import_content(self.shared)
+        self.wire.calls.clear()
+        self.assertEqual(warm.manifest(self.image, self.tag)[0], self.digest)
+        self.assertFalse([c for c in self.wire.calls if c[1] == 'GET' and c[2] == 'manifests'])
+
+    def test_shared_content_cannot_override_a_live_tag_binding(self):
+        """Poisoned or stale content never decides which digest a tag resolves to."""
+        other = self.digests[self.data['versions'][1]['version']]
+        warm = self.consumer()
+        warm.import_content(self.shared)
+        self.wire.tags[self.image, self.tag] = other
+        self.assertEqual(warm.manifest(self.image, self.tag)[0], other)
+
+    def test_bytes_that_do_not_hash_to_their_key_are_refused(self):
+        poisoned = copy.deepcopy(self.shared)
+        key = next(iter(poisoned['content']))
+        poisoned['content'][key] = base64.b64encode(b'{"schemaVersion":2}').decode()
+        with self.assertRaisesRegex(ValueError, 'does not match its digest'):
+            self.consumer().import_content(poisoned)
+
+    def test_malformed_scope_schema_and_encoding_are_refused(self):
+        digest = 'sha256:' + '0' * 64
+        payload = base64.b64encode(b'{}').decode()
+        for broken in ({'schema': 2, 'content': {}},
+                       {'schema': 1},
+                       {'schema': 1, 'content': []},
+                       {'schema': 1, 'content': {f'foreign/repo|{digest}': payload}},
+                       {'schema': 1, 'content': {f'{matrix.HUB}|sha256:zz': payload}},
+                       {'schema': 1, 'content': {f'{matrix.HUB}': payload}},
+                       {'schema': 1, 'content': {f'{matrix.HUB}|{digest}': '!!not base64!!'}},
+                       {'schema': 1, 'content': {f'{matrix.HUB}|{digest}': 7}}):
+            with self.subTest(broken=broken), self.assertRaises(ValueError):
+                self.consumer().import_content(broken)
+
+    def test_valid_bytes_that_are_not_a_manifest_are_refused(self):
+        raw = b'[1, 2, 3]'
+        digest = 'sha256:' + hashlib.sha256(raw).hexdigest()
+        with self.assertRaises(ValueError):
+            self.consumer().import_content({'schema': 1, 'content': {
+                f'{matrix.HUB}|{digest}': base64.b64encode(raw).decode()}})
 
 
 class CacheSafetyTests(unittest.TestCase):
