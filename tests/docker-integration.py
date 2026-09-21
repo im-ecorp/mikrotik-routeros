@@ -5,7 +5,6 @@ Run only on an isolated Docker host (for example a GitHub-hosted runner).
 Passwords and raw serial exchanges never enter logs, argv, or evidence.
 """
 import argparse
-import hashlib
 import importlib.util
 import ipaddress
 import json

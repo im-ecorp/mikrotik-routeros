@@ -1,6 +1,5 @@
 """Current website release scope is deliberately separate from default-seed CI."""
 import copy
-import importlib.util
 import json
 from pathlib import Path
 import unittest
@@ -31,7 +30,7 @@ class SeedChecksumTests(unittest.TestCase):
         self.assertIn('ARG ROUTEROS_SHA256=', text)
         self.assertLess(text.index('sha256sum -c'), text.index('unzip /routeros/image.zip'))
         self.assertIn('io.mikrotik-routeros.seed.sha256=$ROUTEROS_SHA256', text)
-        self.assertIn('ARG ROUTEROS_VERSION=7.21.4\n', text)
+        self.assertIn('ARG ROUTEROS_VERSION=7.21.5\n', text)
 
 
 class MatrixPolicyTests(unittest.TestCase):
@@ -110,7 +109,18 @@ class PublicationTests(QualificationTests):
         outer = self
         class Fake:
             def __init__(self):
-                self.tags = {}; self.rows = {}; self.copies = []
+                self.tags = {}; self.rows = {}; self.copies = []; self.content = {}
+            def export_content(self):
+                from scripts.chr_registry import CONTENT_SCHEMA
+                return {'schema': CONTENT_SCHEMA, 'content': {}}
+            def import_content(self, data):
+                from scripts.chr_registry import CONTENT_SCHEMA
+                if not isinstance(data, dict) or data.get('schema') != CONTENT_SCHEMA:
+                    raise ValueError('Unsupported shared registry content schema')
+                return len(data.get('content') or {})
+            def resolve(self, image, tag):
+                # HEAD-only binding: same answer, without the absence proof.
+                return tag if tag.startswith('sha256:') and tag in self.rows else self.tags.get((image, tag))
             def manifest(self, image, tag):
                 digest = tag if tag.startswith('sha256:') and tag in self.rows else self.tags.get((image, tag))
                 return digest, ({'manifests': [{'digest': digest + '/' + arch, 'platform': {'os': 'linux', 'architecture': arch}}

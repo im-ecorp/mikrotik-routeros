@@ -90,6 +90,24 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("group: chr-image-publication", recovery_text)
         self.assertIn("group: chr-image-publication", text)
 
+    def test_publication_creates_no_commit_sha_tags(self):
+        """Traceability is the revision label; a sha-<commit> tag is only tag-list clutter."""
+        text = WORKFLOW.read_text()
+        for gone in ("SHA_TAG", "sha_tag"):
+            self.assertNotIn(gone, text)
+        published = [line.strip() for line in
+                     text.split("          tags: |\n", 1)[1].split("      - name:", 1)[0].splitlines()
+                     if line.strip()]
+        self.assertEqual(published, [
+            "${{ env.DOCKERHUB_IMAGE }}:${{ env.IMAGE_TAG }}",
+            "${{ env.DOCKERHUB_IMAGE }}:v${{ env.IMAGE_TAG }}",
+            "${{ env.GHCR_IMAGE }}:${{ env.IMAGE_TAG }}",
+            "${{ env.GHCR_IMAGE }}:v${{ env.IMAGE_TAG }}"])
+        # The label the tag used to duplicate must still be built into the image.
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertIn("org.opencontainers.image.revision=$SOURCE_REVISION", dockerfile)
+        self.assertIn("SOURCE_REVISION=${{ env.SOURCE_SHA }}", text)
+
     def test_policy_runs_as_actions_temporary_python_file(self):
         import os
         import subprocess
@@ -100,12 +118,12 @@ class ReleaseTests(unittest.TestCase):
             script = Path(directory) / "step.py"
             script.write_text(code)
             output = Path(directory) / "outputs"
-            env = dict(os.environ, RELEASE_VERSION="1.0.0", ROUTEROS_VERSION="7.21.4",
+            env = dict(os.environ, RELEASE_VERSION="1.0.0", ROUTEROS_VERSION="7.21.5",
                        SOURCE_REF="refs/heads/main", SOURCE_SHA="a" * 40, GITHUB_OUTPUT=str(output))
             env.pop("PYTHONPATH", None)
             result = subprocess.run([sys.executable, str(script)], cwd=ROOT, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("image_tag=7.21.4", output.read_text())
+            self.assertIn("image_tag=7.21.5", output.read_text())
 
     def test_supported_base_and_traceability_labels(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
@@ -145,7 +163,9 @@ class ReleaseTests(unittest.TestCase):
         validate = policy()["validate_inputs"]
         sha = "a" * 40
         tags = validate("1.0.0", "7.21.4", "refs/heads/main", sha, "7.21.4")
-        self.assertEqual(tags, ["7.21.4", "v7.21.4", "sha-" + sha])
+        # Provenance is the image revision label, not a 40-hex tag in the public list.
+        self.assertEqual(tags, ["7.21.4", "v7.21.4"])
+        self.assertFalse([tag for tag in tags if tag.startswith("sha-")])
         for release, seed, ref, revision in [
             ("$(touch /bad)", "7.21.4", "refs/heads/main", sha),
             ("1.0.0\nlatest", "7.21.4", "refs/heads/main", sha),

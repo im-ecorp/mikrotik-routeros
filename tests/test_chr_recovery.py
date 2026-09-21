@@ -1,5 +1,4 @@
 """Offline guardrails for the fixed original-dispatch recovery."""
-import copy
 import hashlib
 import json
 import os
@@ -211,7 +210,7 @@ class RecoveryTests(unittest.TestCase):
             with patch.dict(os.environ, env, clear=True), \
                     patch.object(recovery, 'load_inputs', return_value=(fixture.data, snapshot, originals, 'b' * 64)), \
                     patch.object(recovery, 'source_identity', return_value='b' * 64), \
-                    patch.object(matrix, 'MatrixRegistry', return_value=registry), \
+                    patch.object(recovery, 'RecoveryRegistry', return_value=registry), \
                     patch.object(matrix, 'MatrixCopy', Copier), patch.object(matrix, 'run_command', run):
                 argv = [command, '--source-tree', str(source), '--output-dir', str(root / 'out')]
                 result = recovery.main(argv)
@@ -395,7 +394,7 @@ class RecoveryTests(unittest.TestCase):
                 output = root / f'out-{index}'
                 with patch.dict(os.environ, env, clear=True), \
                         patch.object(recovery, 'load_inputs', return_value=(fixture.data, snapshot, originals, 'b' * 64)), \
-                        patch.object(matrix, 'MatrixRegistry', return_value=registry), \
+                        patch.object(recovery, 'RecoveryRegistry', return_value=registry), \
                         patch('subprocess.run', return_value=self.jobs_response(jobs), side_effect=error), \
                         patch.object(matrix, 'MatrixCopy') as copier:
                     self.assertEqual(recovery.main(['aggregate', '--reports', str(root), '--output-dir', str(output)]), 1)
@@ -481,7 +480,7 @@ class RecoveryTests(unittest.TestCase):
         error = RegistryError('token', 'forbidden', matrix.HUB, 403)
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, env, clear=True), \
                 patch.object(recovery, 'load_inputs', return_value=(fixture.data, snapshot, originals, 'b' * 64)), \
-                patch.object(matrix, 'MatrixRegistry', return_value=registry), \
+                patch.object(recovery, 'RecoveryRegistry', return_value=registry), \
                 patch.object(registry, 'manifest', side_effect=error), \
                 patch.object(matrix, 'MatrixCopy', side_effect=AssertionError('no login')):
             output = Path(directory) / 'out'
@@ -501,7 +500,10 @@ class RecoveryTests(unittest.TestCase):
                          'python3 scripts/chr_recovery.py preflight', 'python3 scripts/chr_recovery.py variant',
                          'python3 scripts/chr_recovery.py aggregate',
                          'name: chr-recovery-version-${{ matrix.version }}-${{ github.run_attempt }}',
-                         'pattern: chr-recovery-version-*', 'merge-multiple: false'):
+                         'pattern: chr-recovery-version-*', 'merge-multiple: false',
+                         'path: recovery-output/registry-content.json',
+                         'pattern: chr-recovery-content-*',
+                         '--shared-content shared-content/registry-content.json'):
             self.assertIn(required, text)
         for forbidden in ('overwrite: true', 'chr_matrix.py prepare', 'chr_matrix.py variant',
                           'chr_matrix.py aggregate', 'contents: write', 'actions: write'):
@@ -509,6 +511,24 @@ class RecoveryTests(unittest.TestCase):
         aggregate = text.split('\n  aggregate:', 1)[1]
         self.assertIn("if: always() && needs.preflight.result == 'success' && needs.variant.result == 'success'", aggregate)
         for version in self.module().FAILED_VERSIONS: self.assertIn("'" + version + "'", text)
+        # Only the producer writes shared content; consumers must degrade, not fail.
+        self.assertEqual(text.count('--shared-content'), 2)
+        self.assertEqual(text.count('continue-on-error: true'), 2)
+
+    def test_missing_or_poisoned_shared_content_never_decides_correctness(self):
+        recovery = self.module()
+        fixture, registry, _, _ = self.fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # A missing artifact degrades to extra reads instead of failing the job.
+            absent = recovery.import_shared_content(registry, root / 'nope.json')
+            self.assertEqual(absent, {'imported': False, 'reason': 'unavailable', 'entries': 0})
+            self.assertEqual(recovery.import_shared_content(registry, None)['reason'], 'not_requested')
+            # An oversized artifact is refused outright rather than parsed.
+            huge = root / 'huge.json'
+            huge.write_bytes(b'{}' + b' ' * (32 * 1024 * 1024))
+            with self.assertRaises(ValueError):
+                recovery.import_shared_content(registry, huge)
 
 
 if __name__ == '__main__':

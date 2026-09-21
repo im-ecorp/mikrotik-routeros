@@ -87,6 +87,14 @@ jobs:
           path: recovery-output/report.json
           retention-days: 90
           if-no-files-found: error
+      # Digest-addressed manifest bytes only. Consumers re-hash every entry and
+      # still resolve each tag live, so this cannot decide what a tag points at.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chr-recovery-content-${{ github.run_attempt }}
+          path: recovery-output/registry-content.json
+          retention-days: 90
+          if-no-files-found: error
 
   variant:
     needs: preflight
@@ -129,6 +137,14 @@ jobs:
           pattern: chr-matrix-version-*
           path: original-reports
           merge-multiple: false
+      # Any attempt's content is equally valid: entries are digest-addressed and
+      # re-hashed on import. Missing content only costs reads, so never fail here.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: chr-recovery-content-*
+          path: shared-content
+          merge-multiple: true
       - name: Disposable Docker prerequisites
         run: |
           docker version
@@ -155,7 +171,7 @@ jobs:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GH_USER: ${{ github.actor }}
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/chr_recovery.py variant
+        run: python3 scripts/chr_recovery.py variant --shared-content shared-content/registry-content.json
       - name: Keep prerequisite failures visible
         if: always()
         shell: python
@@ -217,6 +233,14 @@ jobs:
           pattern: chr-recovery-version-*
           path: recovery-reports
           merge-multiple: false
+      # Any attempt's content is equally valid: entries are digest-addressed and
+      # re-hashed on import. Missing content only costs reads, so never fail here.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: chr-recovery-content-*
+          path: shared-content
+          merge-multiple: true
       - name: Install digest-preserving copier
         run: |
           sudo apt-get update -qq
@@ -227,7 +251,7 @@ jobs:
           HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GH_USER: ${{ github.actor }}
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/chr_recovery.py aggregate
+        run: python3 scripts/chr_recovery.py aggregate --shared-content shared-content/registry-content.json
       - name: Keep prerequisite failures visible
         if: always()
         shell: python

@@ -295,7 +295,10 @@ def validate_inputs(release, seed, ref, sha, tested_seed):
         raise ValueError('routeros_version must match the runtime-tested Dockerfile seed')
     if ref != 'refs/heads/main' or not re.fullmatch(r'[0-9a-f]{40}', sha):
         raise ValueError('release requires an exact main commit SHA')
-    return [seed, f'v{seed}', f'sha-{sha}']
+    # Source provenance lives in the org.opencontainers.image.revision label, which
+    # travels inside the image. A sha-<commit> tag only duplicates it in the public
+    # tag list, so publication no longer creates one. Existing tags stay preserved.
+    return [seed, f'v{seed}']
 
 
 def require_run(runs, sha):

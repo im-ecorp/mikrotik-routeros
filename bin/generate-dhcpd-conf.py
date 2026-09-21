@@ -7,7 +7,7 @@ import socket
 import subprocess
 import sys
 
-from typing import List, Iterable
+from typing import Iterable
 
 DEFAULT_ROUTE = 'default'
 DEFAULT_DNS_IPS = ('8.8.8.8', '8.8.4.4')

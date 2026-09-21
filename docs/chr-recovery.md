@@ -48,7 +48,70 @@ API identity contract. Cross-run recovery-report reuse is unsupported. A repeate
 local invocation refuses an existing output directory rather than replacing evidence.
 The unchanged seventeen-report qualification gate still follows these checks.
 
-Only `recovery-output/report.json` is uploaded. Registry errors, bounded command
+### Shared registry content
+
+Docker Hub counts a pull as a `GET` on `/v2/*/manifests/*`; manifest `HEAD`
+requests are exempt, which is why the documented way to read your own remaining
+quota is a `HEAD`. Measured directly against `registry-1.docker.io` on
+2026-09-22 with a single token:
+
+| request | `ratelimit-remaining` |
+| --- | --- |
+| `HEAD` x3 | 100, 100, 100 |
+| first `GET` | 99 |
+| second `GET` | 99 |
+| `HEAD` after | 99 |
+
+`HEAD` never decrements, `GET` does, and two `GET`s on one manifest cost a single
+pull. The advertised window was `w=3600`, so no code may assume a particular
+window length. Every job therefore resolves tags with `HEAD` and keeps a
+digest-keyed cache of the bytes it has already verified.
+
+The preflight job additionally uploads `registry-content.json`
+(`chr-recovery-content-<attempt>`): base64 manifest bytes keyed by
+`<repository>|sha256:<digest>`, and nothing else. Variant and aggregate jobs
+import it and re-hash every entry against the digest that keys it, refusing any
+mismatch, foreign repository, bad schema or non-manifest payload. **Tag bindings
+are deliberately never shared.** Each job still resolves every tag live with a
+fresh `HEAD`, so drift detection is exactly as strong as before; shared content
+only answers "what are the bytes behind this digest", which is immutable.
+
+Because entries are digest-addressed, any attempt's artifact is equally valid,
+and a missing one is not an error: the consumer download is `continue-on-error`
+and the job falls back to full reads. Shared content is a quota optimization and
+never an input to a correctness decision.
+
+Measured over the offline budget fixture, one full recovery run
+(1 preflight + 7 variants + 1 aggregate) costs on Docker Hub:
+
+| | manifest `GET` (billable) |
+| --- | --- |
+| before | 1053 |
+| digest cache only | 603 |
+| digest cache + shared content | 179 |
+| + scoped absence proof | **95** |
+
+### Scoped absence proof
+
+A `HEAD` alone cannot prove `MANIFEST_UNKNOWN`, so absence still costs a `GET`,
+and absence is never cached — absence is what authorizes a write.
+
+Each job therefore GET-proves absence only for the destinations it may write:
+a variant job covers its own version, while the preflight and aggregate jobs
+cover all seventeen. Every other destination is compared from a fresh `HEAD`.
+
+This removes redundancy, not coverage. Each of the seven failed versions is still
+GET-proven three times — by the preflight job, by its own variant job immediately
+before its writes, and by the aggregate job before `latest` moves — instead of
+nine times by every job in the run. The write path in `publish_version` re-proves
+each target with `manifest()` immediately before copying regardless, and
+`chr-image-publication` concurrency already serialises publication, so external
+drift still fails the run.
+
+`RecoveryRegistry.resolve()` is the read-only half of that split and is
+deliberately unavailable to the write path.
+
+Only `recovery-output/report.json` and `recovery-output/registry-content.json` are uploaded. Registry errors, bounded command
 failures and runtime failure codes come from the instrumented executor. Raw
 subprocess output, private runtime directories, disks, auth and exception strings
 are never uploaded. Original runtime gates are not relaxed; a genuine guest

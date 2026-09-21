@@ -10,9 +10,11 @@ import subprocess
 
 try:
     from scripts import chr_matrix as matrix
+    from scripts.chr_registry import RecoveryRegistry
     from scripts.chr_diagnostics import ORIGINAL_RUN_ID, ORIGINAL_SOURCE_SHA, SNAPSHOT_SHA256
 except ModuleNotFoundError:
     import chr_matrix as matrix
+    from chr_registry import RecoveryRegistry
     from chr_diagnostics import ORIGINAL_RUN_ID, ORIGINAL_SOURCE_SHA, SNAPSHOT_SHA256
 
 FAILED_VERSIONS = ('6.49.21', '6.49.22', '7.23.5', '7.24.2', '7.24.3', '7.24.4', '7.25beta5')
@@ -75,8 +77,22 @@ def load_inputs(source, path, originals, report):
     return data, snapshot, reports, harness_hash
 
 
-def preflight(registry, data, snapshot, originals, harness_hash, report):
-    """Read every original success and every remaining destination before login/writes."""
+def preflight(registry, data, snapshot, originals, harness_hash, report, *, write_scope=None):
+    """Read every original success and every remaining destination before login/writes.
+
+    `write_scope` is the set of versions this job may write, or None for every
+    version. Absence is what authorizes a write, and only a GET can prove it, so
+    destinations inside the scope are GET-proven while the rest are compared from
+    a fresh HEAD. Nothing is skipped: every failed version's own variant job proves
+    its own destinations, and the preflight and aggregate jobs both prove all 17.
+    """
+    scoped = write_scope is not None
+
+    def binding(image, reference, proven):
+        if proven:
+            return registry.manifest(image, reference)[0]
+        return registry.resolve(image, reference)
+
     matrix.require_snapshot(snapshot, data, ORIGINAL_SOURCE_SHA, ORIGINAL_RUN_ID, True)
     original_data = dict(data, versions=[r for r in data['versions'] if r['version'] not in FAILED_VERSIONS])
     qualified = matrix.require_reports(original_data, originals, ORIGINAL_SOURCE_SHA,
@@ -88,7 +104,8 @@ def preflight(registry, data, snapshot, originals, harness_hash, report):
     readbacks = []
     for row in data['versions']:
         version = row['version']; tag = matrix.source_tag(ORIGINAL_SOURCE_SHA, version)
-        existing = {image: registry.manifest(image, tag)[0] for image in (matrix.HUB, matrix.GHCR)}
+        writable = not scoped or version in write_scope
+        existing = {image: binding(image, tag, writable) for image in (matrix.HUB, matrix.GHCR)}
         digests = {d for d in existing.values() if d is not None}
         if len(digests) > 1:
             raise ValueError('Cross-registry immutable sources disagree')
@@ -108,7 +125,7 @@ def preflight(registry, data, snapshot, originals, harness_hash, report):
         else:
             for image in (matrix.HUB, matrix.GHCR):
                 for alias in (version, 'v' + version):
-                    current = registry.manifest(image, alias)[0]
+                    current = binding(image, alias, writable)
                     baseline = snapshot['before'][f'{image}:{alias}']
                     if current != baseline and (digest is None or current != digest):
                         raise ValueError('Target drifted from the original dispatch snapshot')
@@ -117,7 +134,35 @@ def preflight(registry, data, snapshot, originals, harness_hash, report):
         baseline = snapshot['before'][f'{image}:latest']
         if current != baseline and (desired[data['latest']] is None or current != desired[data['latest']]):
             raise ValueError('Target drifted from the original dispatch snapshot')
-    report.update(reused_versions=sorted(qualified), original_readbacks=readbacks)
+    report.update(reused_versions=sorted(qualified), original_readbacks=readbacks,
+                  write_scope=None if write_scope is None else sorted(write_scope))
+
+SHARED_CONTENT_NAME = 'registry-content.json'
+
+
+def import_shared_content(registry, path):
+    """Immutable content may cross jobs; every tag binding is still re-read live."""
+    if path is None:
+        return {'imported': False, 'reason': 'not_requested', 'entries': 0}
+    path = Path(path)
+    if not path.is_file():
+        # Reruns can outlive the producing attempt's artifact. Costs reads, not correctness.
+        return {'imported': False, 'reason': 'unavailable', 'entries': 0}
+    raw = path.read_bytes()
+    if len(raw) > 32 * 1024 * 1024:
+        raise ValueError('Shared registry content exceeds the accepted size')
+    entries = registry.import_content(json.loads(raw))
+    return {'imported': True, 'entries': entries,
+            'sha256': hashlib.sha256(raw).hexdigest()}
+
+
+def export_shared_content(registry, output):
+    """Publish only digest-addressed bytes so consumers can re-derive every hash."""
+    raw = (json.dumps(registry.export_content(), indent=2, sort_keys=True) + '\n').encode()
+    (output / SHARED_CONTENT_NAME).write_bytes(raw)
+    return {'entries': len(registry.content), 'sha256': hashlib.sha256(raw).hexdigest(),
+            'bytes': len(raw)}
+
 
 def identity():
     executor = os.environ.get('GITHUB_SHA', '')
@@ -270,6 +315,8 @@ def main(argv=None):
     parser.add_argument('--originals', type=Path, default=Path('original-reports'))
     parser.add_argument('--reports', type=Path, default=Path('recovery-reports'))
     parser.add_argument('--output-dir', type=Path, default=Path('recovery-output'))
+    parser.add_argument('--shared-content', type=Path, default=None,
+                        help='Digest-verified manifest bytes from the preflight job')
     args = parser.parse_args(argv)
     # A repeated invocation must never erase its predecessor's evidence.
     try:
@@ -292,9 +339,15 @@ def main(argv=None):
                 raise ValueError('Version is outside the seven-version recovery scope')
             report['version'] = version
         data, snapshot, originals, harness_hash = load_inputs(source, args.snapshot, args.originals, report)
-        registry = matrix.MatrixRegistry()
-        preflight(registry, data, snapshot, originals, harness_hash, report)
+        registry = RecoveryRegistry()
+        report['stage'] = 'shared_content_import'
+        report['shared_content'] = import_shared_content(registry, args.shared_content)
+        # A variant job writes only its own version; preflight and aggregate cover all 17.
+        scope = {version} if args.command == 'variant' else None
+        preflight(registry, data, snapshot, originals, harness_hash, report, write_scope=scope)
         if args.command == 'preflight':
+            report['stage'] = 'shared_content_export'
+            report['shared_content_export'] = export_shared_content(registry, output)
             report.update(status='success', count=7)
         elif args.command == 'variant':
             row = next(r for r in data['versions'] if r['version'] == version)

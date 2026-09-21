@@ -4,9 +4,11 @@ LABEL org.opencontainers.image.authors="Hossein Sepiol <mhsaeidi81@gmail.com>"
 LABEL description="MikroTik RouterOS CHR running inside Docker using QEMU"
 
 # Seed selection initializes new disks; it never upgrades an existing guest.
-ARG ROUTEROS_VERSION=7.21.4
-# Vendor checksum of chr-7.21.4.vdi.zip; other seeds must override both args.
-ARG ROUTEROS_SHA256=b4c5036d24a1ae4490758843aae0c8af2b41237dd69832c770621ee72341db0f
+# 7.21.5 is the current longTerm release; MikroTik no longer offers 7.21.4, so a
+# build pinned to it would eventually 404 on download.mikrotik.com.
+ARG ROUTEROS_VERSION=7.21.5
+# Vendor checksum of chr-7.21.5.vdi.zip; other seeds must override both args.
+ARG ROUTEROS_SHA256=562761f902da79a344bf3c3fa4e3d990b698054a58124d906882a36ab99479d5
 ARG WRAPPER_VERSION=dev
 ARG SOURCE_REVISION=unknown
 ARG SOURCE_URL=https://github.com/im-ecorp/mikrotik-routeros
