@@ -3,15 +3,11 @@ set -euo pipefail
 
 DATA_DIR="/routeros/data"
 SHARED_DIR="/routeros/shared"
-IMAGE_FILE="$DATA_DIR/$ROUTEROS_IMAGE"
-
-mkdir -p "$DATA_DIR"
 mkdir -p "$SHARED_DIR"
 
-if [ ! -f "$IMAGE_FILE" ]; then
-    echo "Creating persistent hard drive for MikroTik..."
-    cp "/routeros/$ROUTEROS_IMAGE" "$IMAGE_FILE"
-fi
+# Initialize/migrate before touching networking. Existing guest disks take priority
+# over the seed bundled with the container; changing tags never upgrades the guest.
+IMAGE_FILE=$(python3 /routeros/bin/init-disk.py "$DATA_DIR" "/routeros/$ROUTEROS_IMAGE")
 
 QEMU_BRIDGE='qemubr0'
 DUMMY_DHCPD_IP='10.0.0.254'
