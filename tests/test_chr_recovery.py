@@ -515,6 +515,44 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(text.count('--shared-content'), 2)
         self.assertEqual(text.count('continue-on-error: true'), 2)
 
+    def test_evidence_steps_run_the_way_actions_runs_them(self):
+        """`shell: python` executes a temp file, so the workspace is not on sys.path.
+
+        This step is the job's last line of defence and runs with `if: always()`, so a
+        failure here marks a successful recovery as failed and blocks aggregation.
+        Run each step exactly as Actions does: a file outside the repo, cwd at the root.
+        """
+        import subprocess
+        import sys
+        import yaml
+        workflow = yaml.safe_load((ROOT / '.github/workflows/chr-matrix-recovery.yml').read_text())
+        steps = [(job, step) for job, spec in workflow['jobs'].items()
+                 for step in spec['steps'] if step.get('shell') == 'python']
+        self.assertEqual(len(steps), 3, 'every python evidence step must be covered')
+        for job, step in steps:
+            with self.subTest(job=job), tempfile.TemporaryDirectory() as directory:
+                outside = Path(directory) / 'step.py'
+                outside.write_text(step['run'])
+                workspace = Path(directory) / 'workspace'
+                workspace.mkdir()
+                # A report already exists, so the step must fall through without writing.
+                evidence = workspace / 'recovery-output'
+                evidence.mkdir()
+                (evidence / 'report.json').write_text('{"status": "success"}')
+                for name in ('scripts', 'config'):
+                    (workspace / name).symlink_to(ROOT / name)
+                env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
+                env.update(CHR_VERSION='7.24.4', GITHUB_SHA='b' * 40, GITHUB_RUN_ID='999',
+                           GITHUB_RUN_ATTEMPT='1', GITHUB_REF='refs/heads/main',
+                           GITHUB_EVENT_NAME='workflow_dispatch',
+                           GITHUB_REPOSITORY=matrix.REPOSITORY,
+                           APPROVE_VERSION_OVERWRITE='true')
+                result = subprocess.run([sys.executable, str(outside)], cwd=workspace,
+                                        env=env, capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0, f'{job}: {result.stderr}')
+                self.assertEqual((evidence / 'report.json').read_text(), '{"status": "success"}',
+                                 f'{job}: an existing report must never be overwritten')
+
     def test_missing_or_poisoned_shared_content_never_decides_correctness(self):
         recovery = self.module()
         fixture, registry, _, _ = self.fixture()
