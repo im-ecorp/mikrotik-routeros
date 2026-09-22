@@ -437,7 +437,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(hasattr(recovery, 'recover_aggregate'), 'gated latest recovery missing')
         fixture, registry, snapshot, originals = self.fixture()
         recovered = []
-        for n, row in enumerate(fixture.data['versions'], 100):
+        for n, row in enumerate(matrix.qualifying(fixture.data), 100):
             if row['version'] not in recovery.FAILED_VERSIONS: continue
             digest = 'sha256:' + f'{n:064x}'
             registry.rows[digest] = row
@@ -462,7 +462,9 @@ class RecoveryTests(unittest.TestCase):
                 self.assertFalse(registry.copies)
             report = {}
             recovery.recover_aggregate(registry, fixture.data, originals, recovered, snapshot, 'b' * 64, report)
-        self.assertEqual(report['count'], 17)
+        # Count follows the qualifying set, not a hard-coded 17: production recovery
+        # reads the pinned manifest, which has no runtimeBlocked and still needs all 17.
+        self.assertEqual(report['count'], len(matrix.qualifying(fixture.data)))
         self.assertEqual(report['latest_version'], '7.24.4')
         self.assertEqual(len(registry.copies), 2)
 

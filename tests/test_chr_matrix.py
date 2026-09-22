@@ -51,6 +51,37 @@ class MatrixPolicyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.m.validate_manifest(data)
 
+    def test_runtime_blocked_excludes_versions_without_losing_the_record(self):
+        """Blocked versions stay in the manifest as reviewed data; only the gate skips them."""
+        data = copy.deepcopy(self.data)
+        self.assertEqual(len(data['versions']), 17)
+        self.assertEqual(sorted(data['runtimeBlocked']['versions']), ['6.49.21', '6.49.22'])
+        self.assertTrue(data['runtimeBlocked']['reason'].strip())
+        qualifying = {r['version'] for r in self.m.qualifying(data)}
+        self.assertEqual(len(qualifying), 15)
+        self.assertNotIn('6.49.21', qualifying)
+        self.assertNotIn('6.49.22', qualifying)
+        # The promotion target must always remain qualifying.
+        self.assertIn(data['latest'], qualifying)
+
+    def test_absent_runtime_blocked_keeps_every_version_qualifying(self):
+        """The pinned original manifest has no such key and must be unaffected."""
+        pinned = copy.deepcopy(self.data)
+        pinned.pop('runtimeBlocked')
+        validated = self.m.validate_manifest(pinned)
+        self.assertEqual(len(self.m.qualifying(validated)), 17)
+
+    def test_runtime_blocked_cannot_hide_latest_or_fail_open(self):
+        for broken in ([], None, 'x', {}, {'versions': '6.49.21'},
+                       {'versions': ['6.49.21'], 'reason': '   '},
+                       {'versions': ['9.9.9'], 'reason': 'unknown version'},
+                       {'versions': ['6.49.21', '6.49.21'], 'reason': 'duplicate'},
+                       {'versions': ['7.24.4'], 'reason': 'blocking the promotion target'}):
+            data = copy.deepcopy(self.data)
+            data['runtimeBlocked'] = broken
+            with self.subTest(broken=broken), self.assertRaises(ValueError):
+                self.m.validate_manifest(data)
+
     def test_source_tag_includes_full_sha_and_exact_seed(self):
         self.assertEqual(self.m.source_tag(self.sha, '7.24'), 'sha-' + self.sha + '-chr-7.24')
         self.assertNotEqual(self.m.source_tag(self.sha, '7.24'), self.m.source_tag(self.sha, '7.25beta5'))
@@ -92,7 +123,7 @@ class QualificationTests(MatrixPolicyTests):
                     'run_id': '123', 'digest': 'sha256:' + 'd' * 64,
                     'platforms': ['linux/amd64', 'linux/arm64'],
                     'runtime_tested': ['linux/amd64'], 'build_only': ['linux/arm64'],
-                    'runtime': self.runtime(r, 'sha256:' + 'd' * 64)} for r in self.data['versions']]
+                    'runtime': self.runtime(r, 'sha256:' + 'd' * 64)} for r in self.m.qualifying(self.data)]
         self.m.require_reports(self.data, reports, self.sha, '123', 'b' * 64, source_image='repo')
         for bad in [reports[:-1], reports + reports[:1]]:
             with self.assertRaises(ValueError):
@@ -169,7 +200,7 @@ class LatestTests(PublicationTests):
     def test_latest_waits_for_all_reports_and_preserves_snapshot(self):
         self.assertTrue(hasattr(self.m, 'aggregate'), 'latest aggregate missing')
         registry = self.registry(); reports = []; before = {}
-        for n, row in enumerate(self.data['versions']):
+        for n, row in enumerate(self.m.qualifying(self.data)):
             digest = 'sha256:' + f'{n:064x}'
             registry.rows[digest] = row
             for image in (self.m.HUB, self.m.GHCR):
@@ -341,7 +372,7 @@ class LatestTests(PublicationTests):
         path = ROOT / '.github/workflows/current-chr-matrix.yml'
         self.assertTrue(path.exists(), 'manual matrix workflow missing')
         text = path.read_text()
-        for required in ('workflow_dispatch:', 'fail-fast: false', 'max-parallel: 3',
+        for required in ('workflow_dispatch:', 'fail-fast: false', 'max-parallel: 1',
                          "github.ref == 'refs/heads/main'", 'if: always()',
                          'approve_version_overwrite:', 'chr-image-publication',
                          'python3 scripts/chr_matrix.py variant', 'python3 scripts/chr_matrix.py aggregate'):

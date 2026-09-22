@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       approve_version_overwrite:
-        description: 'Approve replacing the 17 reviewed version/vversion aliases and latest with qualified 7.24.4'
+        description: 'Approve replacing the qualifying version/vversion aliases and latest with qualified 7.24.4'
         required: true
         type: boolean
         default: false
@@ -95,7 +95,11 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      max-parallel: 3
+      # One guest at a time. Three parallel QEMU TCG guests demonstrably flake:
+      # 7.24.3 passed then failed across runs 35656139663 and 35667609143. A single
+      # flake here fails the whole latest promotion, and at a measured 4.5 min per
+      # variant serialising 15 costs ~67 min instead of ~22. Worth the retry it saves.
+      max-parallel: 1
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
       CHR_VERSION: ${{ matrix.version }}

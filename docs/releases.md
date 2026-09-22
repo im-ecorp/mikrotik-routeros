@@ -15,7 +15,7 @@ CHR version aliases may receive tested container/runtime fixes **only with expli
 
 Publication no longer creates a `sha-<full 40-character source SHA>` tag. That tag only duplicated `org.opencontainers.image.revision`, which is built into the image and readable with `docker inspect`, while adding a permanent unreadable entry to every public tag list. Historical `sha-` tags already in the registries are still **preserved and verified unchanged** by the recovery path; nothing is deleted. The separate candidate tag `sha-<source SHA>-chr-<seed>` is unrelated and still required — it is the staging handle the matrix publisher qualifies before promoting aliases.
 
-The default-seed publisher and bounded recovery never write `latest`. The separately authorized **current website matrix** below may promote `latest` to qualified `7.24.4` only after all 17 versions pass. No publisher deletes images or creates new `-r` suffix tags. The existing Docker Hub `7.21.4-r1.0.0` reference is preserved read-only; it is not a new public versioning scheme and must not be newly published to GHCR. Previous documentation described suffix-tag publication and untouched CHR aliases. That policy is superseded by this explicitly approved CHR-only policy.
+The default-seed publisher and bounded recovery never write `latest`. The separately authorized **current website matrix** below may promote `latest` to qualified `7.24.4` only after every qualifying version passes (fifteen of the seventeen recorded; `6.49.21` and `6.49.22` are `runtimeBlocked`). No publisher deletes images or creates new `-r` suffix tags. The existing Docker Hub `7.21.4-r1.0.0` reference is preserved read-only; it is not a new public versioning scheme and must not be newly published to GHCR. Previous documentation described suffix-tag publication and untouched CHR aliases. That policy is superseded by this explicitly approved CHR-only policy.
 
 `WRAPPER_VERSION` / OCI `org.opencontainers.image.version` remain internal container-code metadata, not the public CHR version. `SOURCE_REVISION` and `SOURCE_URL` populate revision/source labels; `io.mikrotik-routeros.seed.version` records CHR separately. Local builds default to internal wrapper `dev` / revision `unknown` rather than claiming a release.
 
@@ -23,7 +23,7 @@ The default-seed publisher and bounded recovery never write `latest`. The separa
 
 `current-chr-matrix.yml` implements the reviewed website selection in [`config/chr-versions.json`](../config/chr-versions.json). This is a captured, reviewed scope, **not a claim of continuously tracking the website**. Discovery deduplicated the visible long-term, stable and development selectors in code:
 
-- `6.49.17`, `6.49.18`, `6.49.19`, `6.49.20`, `6.49.21`, `6.49.22`
+- `6.49.17`, `6.49.18`, `6.49.19`, `6.49.20`, ~~`6.49.21`~~, ~~`6.49.22`~~ (see runtime-blocked below)
 - `7.21.5`, `7.23.4`, `7.23.5`, `7.23.6`, `7.23.7`
 - `7.24`, `7.24.1`, `7.24.2`, `7.24.3`, `7.24.4`, `7.25beta5`
 
