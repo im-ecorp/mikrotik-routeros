@@ -113,9 +113,9 @@ def require_runtime(report, row, sha, image, harness_hash):
 
 
 def require_reports(data, reports, sha, run_id, harness_hash, *, source_image=HUB):
-    expected = {r['version']: r for r in data['versions']}
+    expected = {r['version']: r for r in qualifying(data)}
     if len(reports) != len(expected) or {r.get('version') for r in reports} != set(expected):
-        raise ValueError('Require exactly one report for each of the 17 versions')
+        raise ValueError('Require exactly one report for each qualifying version')
     for report in reports:
         if (report.get('status') != 'success' or report.get('source_sha') != sha or
                 report.get('run_id') != run_id or report.get('platforms') != PLATFORMS or
@@ -136,6 +136,19 @@ def validate_manifest(data):
         raise ValueError('Unreviewed manifest schema or latest')
     if len(rows) != 17 or {r['version'] for r in rows} != expected:
         raise ValueError('Manifest must contain exactly the 17 reviewed website versions')
+    # Optional: versions kept on record but excluded from runtime qualification and
+    # therefore from the promotion gate. Absent in the pinned original manifest, so
+    # the bounded recovery keeps requiring all seventeen exactly as before.
+    blocked = data['runtimeBlocked'] if 'runtimeBlocked' in data else {'versions': []}
+    if not isinstance(blocked, dict) or not isinstance(blocked.get('versions'), list):
+        # Absent is fine; present-but-malformed must never read as 'nothing blocked'.
+        raise ValueError('runtimeBlocked must be an object with a versions list')
+    names = blocked['versions']
+    if (len(set(names)) != len(names) or not set(names) <= {r['version'] for r in rows} or
+            data['latest'] in names or not all(isinstance(n, str) for n in names)):
+        raise ValueError('runtimeBlocked must be distinct known versions and never latest')
+    if names and not (blocked.get('reason') or '').strip():
+        raise ValueError('runtimeBlocked requires a written reason')
     for row in rows:
         version = row['version']
         if (row.get('architecture') != 'x86' or
@@ -145,6 +158,12 @@ def validate_manifest(data):
                 set(row['channels']) - {'stable', 'longTerm', 'development'}):
             raise ValueError('Invalid reviewed x86 VDI artifact')
     return data
+
+
+def qualifying(data):
+    """Versions that must pass runtime qualification before any alias or latest moves."""
+    names = set(data.get('runtimeBlocked', {}).get('versions', []))
+    return [row for row in data['versions'] if row['version'] not in names]
 
 
 def load_manifest(path):
@@ -245,15 +264,16 @@ def aggregate(registry, copy_image, data, reports, sha, run_id, harness_hash, sn
     qualified = require_reports(data, reports, sha, run_id, harness_hash)
     def read_all():
         records = []
-        for row in data['versions']:
+        for row in qualifying(data):
             digest = qualified[row['version']]['digest']
             for image in (HUB, GHCR):
                 for tag in (row['version'], 'v' + row['version'], source_tag(sha, row['version'])):
                     records.append(verify_image(registry, image, tag, digest, row, sha))
         check_preserved(registry, snapshot)
         return records
-    report['images'] = read_all()  # All 17 sources/aliases must exist in both registries first.
-    row = next(r for r in data['versions'] if r['version'] == data['latest'])
+    # Every qualifying source/alias must exist in both registries before latest moves.
+    report['images'] = read_all()
+    row = next(r for r in qualifying(data) if r['version'] == data['latest'])
     desired = qualified[data['latest']]['digest']
     for image in (HUB, GHCR):
         require_target(registry.manifest(image, 'latest')[0], snapshot['before'][f'{image}:latest'], desired, approve)
@@ -441,7 +461,7 @@ def main(argv=None):
         if args.command == 'variant':
             stage = 'version_validation'
             version = os.environ.get('CHR_VERSION', '')
-            row = next((r for r in data['versions'] if r['version'] == version), None)
+            row = next((r for r in qualifying(data) if r['version'] == version), None)
             if row is None:
                 raise ValueError('Version is outside reviewed scope')
             report['version'] = row['version']
@@ -465,8 +485,10 @@ def main(argv=None):
             check_preserved(registry, snapshot, report)
             stage = 'matrix_output'
             with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-                output.write('matrix=' + json.dumps({'include': [{'version': r['version']} for r in data['versions']]}) + '\n')
-            report.update(status='success', count=len(data['versions']), snapshot=snapshot)
+                output.write('matrix=' + json.dumps({'include': [{'version': r['version']} for r in qualifying(data)]}) + '\n')
+            report.update(status='success', count=len(qualifying(data)),
+                          blocked=[r['version'] for r in data['versions']
+                                   if r not in qualifying(data)], snapshot=snapshot)
             return 0
         stage = 'snapshot_read'
         snapshot = json.loads(args.snapshot.read_text())

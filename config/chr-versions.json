@@ -2,6 +2,14 @@
   "schema": 1,
   "latest": "7.24.4",
   "source": "https://mikrotik.com/download",
+  "runtimeBlocked": {
+    "versions": [
+      "6.49.21",
+      "6.49.22"
+    ],
+    "reason": "Guest does not accept the persisted admin password after the first restart, so runtime qualification cannot complete. Observed identically in every attempt: runs 35621045214, 35656139663 and 35667609143 all stop at the same point (1 shutdown, 11 checks) and time out waiting for the post-restart login. 6.49.17 through 6.49.20 pass the same harness unchanged.",
+    "evidence": "docs/runtime.md#routeros-6-and-current-version-qualification"
+  },
   "discovery_sha256": {
     "main-artifacts.json": "188a1babd3d09e3f4304f8abe1483db0e6dbc493f9e180377436f8aae173e311",
     "main-channel-lists.json": "cf134c40bf5ca36230765c509286ed1a943ca6abda4e733ecbde08896d54fa45"

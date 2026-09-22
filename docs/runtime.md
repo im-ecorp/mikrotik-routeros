@@ -212,9 +212,34 @@ of `software license? [Y/n]`, `new password>` or the prompt ever appear. The
 `Unexpected password reset on persisted guest` guard only fires when `new password>`
 is actually seen, so this path cannot reach it.
 
-The three are not a contiguous version range — 7.24.2 failed while 7.24.1, 7.24.3
-and 7.24.4 passed — so a repeat run is what distinguishes a guest-side persistence
-bug from timing under three parallel TCG guests. Treat the classification as
-`authentication/serial_timeout` only; do not record a persistence claim without a
-transcript that shows the prompt, and do not weaken the restart or authentication
-gates to make it pass.
+A second full run (35667609143) separated the two causes. 7.24.3 passed once then
+failed, and 7.24.2 stopped at 14 checks then 19, so those are timing under parallel
+TCG guests and are addressed by `max-parallel: 1`. 6.49.21 and 6.49.22 stopped at
+the **identical** point in every attempt.
+
+### 6.49.21 and 6.49.22 are runtime-blocked
+
+Comparing the `checks` arrays pins the failure exactly. Both complete checks 1–11
+— health, fresh guest at the expected `guest_version`, seed match, HTTP/SSH/UDP DNS,
+isolation, the full DHCP disable/re-enable cycle, and the `before-restart` cold
+backup — then stop. A passing version's next two entries are `{"health": "healthy"}`
+and `{"fresh": false, ...}`: the re-login to the **persisted** guest after restart.
+
+So the guest does not accept the previously set admin password once it returns. The
+harness sends the stored password, RouterOS re-prompts `Login:`, none of the awaited
+patterns appear, and the read times out. The `Unexpected password reset on persisted
+guest` guard cannot fire, because that requires actually seeing `new password>`.
+
+This is guest-side, not harness-side: the same unchanged harness passes 6.49.17
+through 6.49.20 and every 7.x version, and it reproduced identically across runs
+35621045214, 35656139663 and 35667609143. It matches the independent offline probe
+above, which found 6.49.22 losing password and identity across a cold restart.
+
+Both are therefore listed in `runtimeBlocked` in `config/chr-versions.json`: kept on
+record as reviewed versions, excluded from runtime qualification and from the
+`latest` gate. They are **not** deleted, and no restart or authentication gate was
+weakened to accommodate them. Remove them from that list to re-include them if a
+future RouterOS release fixes the behaviour.
+
+Treat the classification as `authentication/serial_timeout` only; do not record a
+persistence claim without a transcript that shows the prompt.

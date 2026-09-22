@@ -23,7 +23,7 @@ The default-seed publisher and bounded recovery never write `latest`. The separa
 
 `current-chr-matrix.yml` implements the reviewed website selection in [`config/chr-versions.json`](../config/chr-versions.json). This is a captured, reviewed scope, **not a claim of continuously tracking the website**. Discovery deduplicated the visible long-term, stable and development selectors in code:
 
-- `6.49.17`, `6.49.18`, `6.49.19`, `6.49.20`, `6.49.21`, `6.49.22`
+- `6.49.17`, `6.49.18`, `6.49.19`, `6.49.20`, ~~`6.49.21`~~, ~~`6.49.22`~~ (see runtime-blocked below)
 - `7.21.5`, `7.23.4`, `7.23.5`, `7.23.6`, `7.23.7`
 - `7.24`, `7.24.1`, `7.24.2`, `7.24.3`, `7.24.4`, `7.25beta5`
 
