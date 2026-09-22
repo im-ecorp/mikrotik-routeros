@@ -291,12 +291,20 @@ OCI labels, separate from the CHR seed version. Docker Hub uses
 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`; GHCR uses the scoped `GITHUB_TOKEN`.
 See [release gates, platform qualifications, and exact-digest recovery](docs/releases.md).
 
-The separate manual `current-chr-matrix.yml` workflow covers the **17 reviewed
-website CHR versions** in `config/chr-versions.json`, including `7.24` and
-`7.25beta5`. Each checksum-verified seed is built for amd64/arm64; the exact final
-amd64 digest must pass full Docker/CHR integration before version aliases move.
-Only after all 17 pass and both registries read back correctly may it promote
-`latest` to **7.24.4**, with explicit overwrite approval. ARM64 is build-only;
+The separate manual `current-chr-matrix.yml` workflow covers the reviewed website
+CHR versions in `config/chr-versions.json`. Seventeen are recorded; **fifteen
+qualify**. `6.49.21` and `6.49.22` are listed under `runtimeBlocked` because the
+guest does not accept the persisted admin password after its first restart, so
+runtime qualification cannot complete — see
+[RouterOS 6 and current-version qualification](docs/runtime.md). They keep their
+reviewed checksums but are excluded from the matrix and from the `latest` gate.
+
+Each checksum-verified seed is built for amd64/arm64; the exact final amd64 digest
+must pass full Docker/CHR integration before version aliases move. Only after all
+fifteen pass and both registries read back correctly may it promote `latest` to
+**7.24.4**, with explicit overwrite approval. `7.25beta5` is a `development`
+channel build and is never a promotion target: the manifest pins `latest` to
+`7.24.4` and validation rejects any other value. ARM64 is build-only;
 the Dockerfile/Compose default remains `7.21.4`. Workflow availability is not
 proof of publication: require its successful aggregate report before deployment.
 

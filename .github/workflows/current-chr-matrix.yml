@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       approve_version_overwrite:
-        description: 'Approve replacing the 17 reviewed version/vversion aliases and latest with qualified 7.24.4'
+        description: 'Approve replacing the qualifying version/vversion aliases and latest with qualified 7.24.4'
         required: true
         type: boolean
         default: false
