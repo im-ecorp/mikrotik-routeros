@@ -372,7 +372,7 @@ class LatestTests(PublicationTests):
         path = ROOT / '.github/workflows/current-chr-matrix.yml'
         self.assertTrue(path.exists(), 'manual matrix workflow missing')
         text = path.read_text()
-        for required in ('workflow_dispatch:', 'fail-fast: false', 'max-parallel: 3',
+        for required in ('workflow_dispatch:', 'fail-fast: false', 'max-parallel: 1',
                          "github.ref == 'refs/heads/main'", 'if: always()',
                          'approve_version_overwrite:', 'chr-image-publication',
                          'python3 scripts/chr_matrix.py variant', 'python3 scripts/chr_matrix.py aggregate'):
